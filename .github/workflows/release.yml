@@ -1,0 +1,237 @@
+name: Build & Release APK
+
+# Сборка release-APK целиком в CI: prebuild генерирует android/ прямо здесь,
+# поэтому в репозитории нет ни папки android/, ни секретов.
+# Keystore для подписи ищется в секрете ANDROID_KEYSTORE_B64; если его нет,
+# генерируется временный — APK соберётся, но обновить по нему прошлую
+# установку не получится.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Версия релиза (без префикса v)"
+        required: true
+        default: "1.1.0"
+      create_release:
+        description: "Создать GitHub Release (true/false)"
+        required: false
+        default: "true"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build APK and publish release
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      VERSION: ${{ github.event.inputs.version || '1.1.0' }}
+      CREATE_RELEASE: ${{ github.event.inputs.create_release || 'true' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Кэш Gradle и CMake: нативная сборка без него идёт заново каждый раз.
+      - name: Cache Gradle
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            gradle-${{ runner.os }}-
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      # SDK на ubuntu-раннере уже установлен; досаждаем только нужные пакеты.
+      # action setup-android@v3 здесь не подходит: он ставит устаревший
+      # пакет `tools`, который больше не публикуется, и падает.
+      - name: Install Android SDK packages
+        run: |
+          set -e
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager | head -n1)
+          fi
+          echo "sdkmanager: $SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          "$SDKMANAGER" "platform-tools" "platforms;android-36" "build-tools;36.0.0" \
+            || "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      # versionCode растёт монотонно, чтобы Android разрешал установку поверх
+      # прошлой сборки, даже если номер версии на экране начали заново.
+      - name: Compute version code
+        run: |
+          BASE=$(echo "${VERSION}" | awk -F. '{printf "%d", ($1+0)*10000 + ($2+0)*100 + ($3+0)}')
+          if [ -z "$BASE" ] || [ "$BASE" -le 0 ]; then BASE=1; fi
+          CODE=$((20000 + BASE))
+          echo "VERSION_CODE=${CODE}" >> "$GITHUB_ENV"
+          echo "versionName=${VERSION} versionCode=${CODE}"
+
+      - name: Generate native project
+        run: |
+          npx expo prebuild --platform android --clean --no-install
+          # Gradle ищет SDK по local.properties либо по ANDROID_HOME/ANDROID_SDK_ROOT.
+          if [ ! -f android/local.properties ]; then
+            echo "sdk.dir=$ANDROID_HOME" > android/local.properties
+          fi
+          ls -la android | head -20
+
+      # Нативный модуль авторизации лежит в modules/digest-http и подключается
+      # автолинковкой Expo во время сборки.
+      - name: Verify native module is linked
+        run: |
+          # resolve печатает JSON в stdout и возвращает ненулевой код, поэтому
+          # проверяем содержимое вывода, а не код возврата.
+          npx expo-modules-autolinking resolve --platform android > autolinking.json 2>&1 || true
+          if ! grep -q "DigestHttpModule" autolinking.json; then
+            echo "Модуль digest-http не найден автолинковкой:"
+            grep -n "digest\|modules:" autolinking.json | head -20
+            exit 1
+          fi
+          echo "digest-http подключён"
+
+      - name: Apply app version to Gradle
+        run: |
+          sed -i "s/versionName \".*\"/versionName \"${VERSION}\"/" android/app/build.gradle
+          sed -i "s/versionCode [0-9]*/versionCode ${VERSION_CODE}/" android/app/build.gradle
+          grep -nE "versionName|versionCode" android/app/build.gradle | head -5
+
+      # Собираем только arm64-v8a: нативный C++ (React Native + Skia) под четыре
+      # архитектуры компилируется часами, а все современные телефоны — 64-битные.
+      # Если нужен x86 для эмулятора, добавьте его в reactNativeArchitectures.
+      - name: Build release APK
+        run: |
+          cd android
+          chmod +x ./gradlew
+          # pipefail обязателен: иначе `| tee` съедает код возврата Gradle
+          # и упавшая сборка отмечается как успешная.
+          set -o pipefail
+          ./gradlew assembleRelease --no-daemon --stacktrace \
+            -PreactNativeArchitectures=arm64-v8a 2>&1 | tee ../build-release.log
+
+      - name: Sign APK
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: |
+          set -e
+          mkdir -p dist
+
+          # Expo по умолчанию подписывает release тем же debug-ключом, поэтому
+          # готовый файл может быть уже подписан — берём любой найденный APK
+          # и переподписываем его своим ключом.
+          APK=$(find android/app/build/outputs/apk/release -name "*-unsigned.apk" | head -n1)
+          [ -z "$APK" ] && APK=$(find android/app/build/outputs/apk/release -name "*.apk" | head -n1)
+          if [ -z "$APK" ]; then
+            echo "release APK не найден"
+            find android/app/build/outputs -name "*.apk" || true
+            exit 1
+          fi
+          echo "Исходный APK: $APK"
+
+          if [ -n "$KEYSTORE_B64" ]; then
+            echo "Keystore: постоянный (из секрета)"
+            STORE_PASS="${KEYSTORE_PASSWORD:-keeneticgiga}"
+            printf '%s' "$KEYSTORE_B64" | tr -d '\r\n' | base64 -d > release.jks
+            # Алиас берём из секрета, иначе определяем по самому keystore:
+            # у чужого ключа он наверняка отличается от нашего.
+            ALIAS="${KEY_ALIAS:-}"
+            if [ -z "$ALIAS" ]; then
+              ALIAS=$(keytool -list -keystore release.jks -storepass "$STORE_PASS" 2>/dev/null \
+                | awk -F, '/PrivateKeyEntry/ {print $1; exit}' | tr -d ' ')
+            fi
+            if [ -z "$ALIAS" ]; then
+              echo "Не удалось определить алиас ключа. Задайте секрет ANDROID_KEY_ALIAS."
+              exit 1
+            fi
+            echo "Алиас: $ALIAS"
+          else
+            echo "Keystore: ВРЕМЕННЫЙ — установка поверх прошлой сборки не пройдёт"
+            STORE_PASS=keeneticgiga
+            ALIAS=keeneticgiga
+            keytool -genkeypair -v -keystore release.jks \
+              -storepass "$STORE_PASS" -keypass "$STORE_PASS" \
+              -alias "$ALIAS" -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=Keenetic Giga, O=NOTyeamu, C=RU"
+          fi
+
+          APKSIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner | sort -V | tail -n1)
+          echo "apksigner: $APKSIGNER"
+          "$APKSIGNER" sign --ks release.jks \
+            --ks-pass "pass:$STORE_PASS" --key-pass "pass:$STORE_PASS" \
+            --ks-key-alias "$ALIAS" \
+            --out "dist/KeeneticGiga-${VERSION}.apk" "$APK"
+
+          echo "--- подпись готового APK ---"
+          "$APKSIGNER" verify --print-certs "dist/KeeneticGiga-${VERSION}.apk" | head -n 4
+          ls -la dist
+
+      # Загрузка артефакта необязательна: APK всё равно попадает в релиз ниже,
+      # а у аккаунта может быть исчерпана квота хранилища Actions —
+      # раньше это роняло весь job уже после успешной сборки.
+      - name: Upload build artifacts
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: apk
+          path: dist/*
+          if-no-files-found: error
+
+      - name: Create GitHub release
+        if: ${{ env.CREATE_RELEASE == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          cat > notes.md <<EOF
+          Keenetic Giga v${VERSION}
+
+          Что нового
+
+          - Новая страница «Кабель Ethernet»: подключения провайдера, расписание и приоритет,
+            имя провайдера, порты и VLAN'ы, параметры IPv4/IPv6, требования провайдера,
+            аутентификация PPPoE/PPTP/L2TP, 802.1x и Ping Check.
+          - Адрес роутера в настройках скрыт анимированным блюром: касание показывает его,
+            долгое нажатие копирует в буфер обмена.
+          - Страницы, открываемые из «Настроек», остаются в «Настройках» — вкладка «Раздел»
+            теперь только для управления роутером.
+          - Проверка обновлений приложения через GitHub Releases.
+          - Адрес роутера больше не хранится в исходниках: вводится на экране входа
+            и остаётся только на устройстве.
+
+          Установка
+
+          - Поставьте APK поверх прошлой версии: внутренний номер сборки растёт монотонно.
+          EOF
+          gh release delete "v${VERSION}" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "v${VERSION}" dist/* \
+            --title "v${VERSION}" \
+            --notes-file notes.md

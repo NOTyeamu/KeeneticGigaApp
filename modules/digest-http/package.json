@@ -1,0 +1,7 @@
+{
+  "name": "digest-http",
+  "version": "1.0.0",
+  "description": "NDW2-authenticated HTTP client for Keenetic routers",
+  "main": "index.ts",
+  "private": true
+}

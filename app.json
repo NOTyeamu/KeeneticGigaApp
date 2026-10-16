@@ -1,0 +1,29 @@
+{
+  "expo": {
+    "name": "Keenetic Giga",
+    "slug": "KeeneticGigaApp",
+    "version": "1.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/main_icon.png",
+    "userInterfaceStyle": "dark",
+    "scheme": "keeneticgiga",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.example.keeneticgigaapp"
+    },
+    "android": {
+      "package": "com.example.keeneticgigaapp",
+      "adaptiveIcon": {
+        "backgroundColor": "#0A0F14",
+        "foregroundImage": "./assets/main_icon.png",
+        "backgroundImage": "./assets/main_icon.png",
+        "monochromeImage": "./assets/main_icon.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/main_icon.png",
+      "bundler": "metro"
+    }
+  }
+}
