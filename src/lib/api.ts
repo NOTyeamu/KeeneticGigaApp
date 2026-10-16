@@ -1,5 +1,6 @@
 import {
   digestFetch,
+  probeUrl,
   AuthError,
   HttpError,
   NetworkError,
@@ -14,15 +15,52 @@ import { Storage } from './storage';
  */
 export const DEFAULT_BASE_URL = 'http://my.keenetic.net/rci/';
 
+/** Приводит адрес к виду <origin>/auth — по нему проверяется доступность. */
+function authEndpoint(baseUrl: string): string {
+  try {
+    const parsed = new URL(baseUrl);
+    return `${parsed.protocol}//${parsed.host}/auth`;
+  } catch {
+    return baseUrl;
+  }
+}
+
 /**
- * Currently active RCI base URL. Defaults to the generic router address above
- * but is normally set by the user from the login screen (persisted in
- * AsyncStorage). Must end with "/rci/". Use setBaseUrl() to change it at runtime.
+ * Локальный адрес — используется по умолчанию. Внешний (KeenDNS) подключается
+ * только когда локальная сеть недоступна: дома вход идёт напрямую к роутеру,
+ * а вне дома — по ссылке.
  */
+let localUrl = DEFAULT_BASE_URL;
+let remoteUrl: string | null = null;
+
+/** Адрес, через который сейчас идёт общение с роутером. */
 let baseUrl = DEFAULT_BASE_URL;
+
+/** Что выбрано сейчас и почему — показывается в настройках. */
+export type RouteKind = 'local' | 'remote';
+let routeKind: RouteKind = 'local';
+let routeReason = '';
+
+const PROBE_TIMEOUT_MS = 2200;
 
 export function getBaseUrl(): string {
   return baseUrl;
+}
+
+export function getLocalUrl(): string {
+  return localUrl;
+}
+
+export function getRemoteUrl(): string | null {
+  return remoteUrl;
+}
+
+export function hasRemoteUrl(): boolean {
+  return remoteUrl !== null && remoteUrl !== '';
+}
+
+export function getRouteInfo(): { kind: RouteKind; url: string; reason: string } {
+  return { kind: routeKind, url: baseUrl, reason: routeReason };
 }
 
 /** Normalise a user-entered URL into a valid /rci/ base URL. */
@@ -40,15 +78,64 @@ export function normalizeBaseUrl(input: string): string {
   return u;
 }
 
-export async function setBaseUrl(next: string, persist = true): Promise<void> {
-  baseUrl = normalizeBaseUrl(next);
-  if (persist) await Storage.setBaseUrl(baseUrl);
+/**
+ * Выбирает рабочий адрес: сначала локальный, при недоступности — внешний.
+ * Возвращает true, если хоть один адрес отвечает.
+ */
+export async function resolveRoute(force = false): Promise<boolean> {
+  // Уже проверяли и адрес отвечает — не тратим время на повторную проверку.
+  if (!force && routeReason === 'ok') return true;
+
+  const localOk = await probeUrl(authEndpoint(localUrl), PROBE_TIMEOUT_MS);
+  // Домашним считаем только ответ самого роутера: у my.keenetic.net есть
+  // публичная DNS-запись, и вне дома он отвечает, но не является роутером.
+  if (localOk.reachable && localOk.local !== false) {
+    baseUrl = localUrl;
+    routeKind = 'local';
+    routeReason = 'ok';
+    return true;
+  }
+
+  if (remoteUrl) {
+    const remoteOk = await probeUrl(authEndpoint(remoteUrl), PROBE_TIMEOUT_MS);
+    if (remoteOk.reachable) {
+      baseUrl = remoteUrl;
+      routeKind = 'remote';
+      routeReason = 'ok';
+      return true;
+    }
+    routeReason = 'unreachable';
+    return false;
+  }
+
+  // Внешний адрес не задан — остаёмся на локальном, чтобы ошибка была понятной.
+  baseUrl = localUrl;
+  routeKind = 'local';
+  routeReason = 'unreachable';
+  return false;
 }
 
-/** Load the persisted base URL into the module once at app boot. */
+/** Задаёт локальный адрес. */
+export async function setBaseUrl(next: string, persist = true): Promise<void> {
+  localUrl = normalizeBaseUrl(next);
+  await Storage.setBaseUrl(localUrl);
+  if (persist) await resolveRoute(true);
+}
+
+/** Задаёт внешний адрес (KeenDNS). null — убрать. */
+export async function setRemoteUrl(next: string | null, persist = true): Promise<void> {
+  remoteUrl = next ? normalizeBaseUrl(next) : null;
+  if (persist) await Storage.setRemoteUrl(remoteUrl);
+  await resolveRoute(true);
+}
+
+/** Load the persisted URLs into the module once at app boot. */
 export async function loadBaseUrl(): Promise<void> {
-  const stored = await Storage.getBaseUrl();
-  if (stored) baseUrl = normalizeBaseUrl(stored);
+  const storedLocal = await Storage.getBaseUrl();
+  if (storedLocal) localUrl = normalizeBaseUrl(storedLocal);
+  const storedRemote = await Storage.getRemoteUrl();
+  if (storedRemote) remoteUrl = normalizeBaseUrl(storedRemote);
+  baseUrl = localUrl;
 }
 
 export const BASE_URL = DEFAULT_BASE_URL;
@@ -75,9 +162,36 @@ function describeStatus(status: number): string {
   }
 }
 
+/** Другой адрес для повторной попытки, если текущий не ответил. */
+function alternativeUrl(): string | null {
+  if (routeKind === 'local') return remoteUrl;
+  return localUrl;
+}
+
 async function request(path: string, creds: Credentials, method = 'GET', body?: unknown): Promise<any> {
   const cleanPath = path.replace(/^\/+/, '');
-  const res = await digestFetch(baseUrl + cleanPath, { method, credentials: creds, body });
+
+  // Первый запрос — выбираем рабочий адрес (локальный, иначе внешний).
+  await resolveRoute();
+
+  let res: Awaited<ReturnType<typeof digestFetch>>;
+  try {
+    res = await digestFetch(baseUrl + cleanPath, { method, credentials: creds, body });
+  } catch (e) {
+    // Адрес перестал отвечать (ушли из дома или вернулись) — пробуем другой.
+    const other = alternativeUrl();
+    if (other && e instanceof NetworkError) {
+      const swapped = await resolveRoute(true);
+      if (swapped) {
+        res = await digestFetch(baseUrl + cleanPath, { method, credentials: creds, body });
+      } else {
+        throw e;
+      }
+    } else {
+      throw e;
+    }
+  }
+
   if (!res.ok) {
     if (res.status === 401) throw new AuthError();
     let detail = '';

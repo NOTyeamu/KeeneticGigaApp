@@ -49,8 +49,19 @@ interface NativeFetchResult {
   detail?: string;
 }
 
+interface ProbeResult {
+  reachable: boolean;
+  reason: string;
+  status?: number;
+  /** Адрес, который ответил в итоге (учитывая перенаправления). */
+  host?: string;
+  /** true, если ответил сам роутер по домашнему адресу, а не внешняя инфраструктура. */
+  local?: boolean;
+}
+
 interface DigestHttpNative {
   fetch(options: Record<string, unknown>): Promise<NativeFetchResult>;
+  probe(url: string, timeoutMs?: number): Promise<ProbeResult>;
 }
 
 /**
@@ -69,6 +80,19 @@ function loadNative(): DigestHttpNative | null {
 }
 
 const native = loadNative();
+
+/**
+ * Быстро проверяет, доступен ли роутер по адресу. Используется, чтобы выбрать
+ * между локальным адресом и внешней ссылкой, не дожидаясь полного таймаута.
+ */
+export async function probeUrl(url: string, timeoutMs = 2500): Promise<ProbeResult> {
+  if (!native) return { reachable: false, reason: 'no_native' };
+  try {
+    return await native.probe(url, timeoutMs);
+  } catch {
+    return { reachable: false, reason: 'error' };
+  }
+}
 
 /**
  * Запрос к роутеру с авторизацией NDW2. Логика авторизации живёт в нативном
@@ -112,11 +136,7 @@ export async function digestFetch(url: string, opts: DigestFetchOptions): Promis
   }
 
   if (result.error === 'auth_not_supported') {
-    throw new AuthError(
-      result.detail
-        ? `Не удалось авторизоваться на роутере. ${result.detail}`
-        : 'Не удалось авторизоваться на роутере.',
-    );
+    throw new AuthError(result.detail || 'Роутер не сообщил параметры авторизации.');
   }
 
   if (result.error === 'auth_failed') {

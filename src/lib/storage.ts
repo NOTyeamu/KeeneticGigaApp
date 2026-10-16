@@ -7,6 +7,7 @@ const KEYS = {
   vibration: '@keenetic/vibration',
   onboardingDone: '@keenetic/onboarding',
   baseUrl: '@keenetic/baseUrl',
+  remoteUrl: '@keenetic/remoteUrl',
 } as const;
 
 export const Storage = {
@@ -52,5 +53,14 @@ export const Storage = {
   },
   async setBaseUrl(v: string): Promise<void> {
     await AsyncStorage.setItem(KEYS.baseUrl, v);
+  },
+
+  /** Внешний адрес (KeenDNS) — используется, когда локальная сеть недоступна. */
+  async getRemoteUrl(): Promise<string | null> {
+    return AsyncStorage.getItem(KEYS.remoteUrl);
+  },
+  async setRemoteUrl(v: string | null): Promise<void> {
+    if (v === null) await AsyncStorage.removeItem(KEYS.remoteUrl);
+    else await AsyncStorage.setItem(KEYS.remoteUrl, v);
   },
 };

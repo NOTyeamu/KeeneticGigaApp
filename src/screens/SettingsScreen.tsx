@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
-import { getBaseUrl } from '../lib/api';
+import { getBaseUrl, getRouteInfo } from '../lib/api';
 import { getAppVersion } from '../lib/version';
 import { MANAGEMENT_ITEMS, type SubItem } from '../data/sections';
 import { FONT, Radius, Spacing } from '../theme/colors';
@@ -20,7 +20,11 @@ export function SettingsScreen() {
   const insets = useSafeAreaInsets();
   const alert = useAlert();
   const [url, setUrl] = useState(getBaseUrl());
-  useEffect(() => { setUrl(getBaseUrl()); }, []);
+  const [route, setRoute] = useState(getRouteInfo());
+  useEffect(() => {
+    setUrl(getBaseUrl());
+    setRoute(getRouteInfo());
+  }, []);
 
   const pickLanguage = () => {
     haptic();
@@ -89,8 +93,25 @@ export function SettingsScreen() {
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
               <Ionicons name="server-outline" size={15} color={colors.textSecondary} />
               <Text style={{ fontFamily: FONT.medium, fontSize: 15, color: colors.text }}>Адрес роутера</Text>
+              <View
+                style={{
+                  backgroundColor: colors.accentSoft,
+                  borderRadius: Radius.pill,
+                  paddingHorizontal: 8,
+                  paddingVertical: 2,
+                }}
+              >
+                <Text style={{ fontFamily: FONT.medium, fontSize: 10, color: colors.accent }}>
+                  {route.kind === 'local' ? 'ДОМАШНЯЯ СЕТЬ' : 'ВНЕШНЯЯ ССЫЛКА'}
+                </Text>
+              </View>
             </View>
             <HiddenValue value={url} hint="Нажмите, чтобы показать · удерживайте, чтобы скопировать" />
+            {route.reason === 'unreachable' ? (
+              <Text style={{ fontFamily: FONT.regular, fontSize: 11.5, color: colors.danger, marginTop: 6 }}>
+                Роутер не отвечает по этому адресу
+              </Text>
+            ) : null}
           </View>
         </View>
       </View>

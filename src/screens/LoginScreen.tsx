@@ -20,7 +20,17 @@ import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
-import { Api, getBaseUrl, setBaseUrl, normalizeBaseUrl } from '../lib/api';
+import {
+  Api,
+  getBaseUrl,
+  getLocalUrl,
+  getRemoteUrl,
+  setBaseUrl,
+  setRemoteUrl,
+  normalizeBaseUrl,
+  resolveRoute,
+  hasRemoteUrl,
+} from '../lib/api';
 import { getAppVersion } from '../lib/version';
 import { AuthError, NetworkError } from '../lib/digest';
 import { FONT, Radius, Spacing } from '../theme/colors';
@@ -52,7 +62,9 @@ export function LoginScreen() {
   // URL display + inline edit.
   const [urlDisplay, setUrlDisplay] = useState(getBaseUrl());
   const [editingUrl, setEditingUrl] = useState(false);
-  const [editValue, setEditValue] = useState(getBaseUrl());
+  const [editLocal, setEditLocal] = useState(getLocalUrl());
+  const [editRemote, setEditRemote] = useState(getRemoteUrl() ?? '');
+  const [urlsSaved, setUrlsSaved] = useState(false);
   const urlScale = useRef(new Animated.Value(1)).current;
 
   // About modal.
@@ -68,6 +80,18 @@ export function LoginScreen() {
     haptic(18);
     try {
       const creds = { user: user.trim(), pass };
+
+      // Сначала пробуем домашний адрес, при недоступности — внешнюю ссылку.
+      const reachable = await resolveRoute(true);
+      if (!reachable) {
+        setError(
+          hasRemoteUrl()
+            ? 'Роутер не отвечает ни по домашнему адресу, ни по внешней ссылке. Проверьте подключение к сети и адреса роутера.'
+            : 'Роутер не отвечает по домашнему адресу. Если вы не дома, укажите внешнюю ссылку — она задаётся по кнопке с карандашом ниже.',
+        );
+        return;
+      }
+
       await Api.system(creds);
       await signIn(creds);
     } catch (e: unknown) {
@@ -90,21 +114,27 @@ export function LoginScreen() {
 
   const onRenamePress = () => {
     haptic(18);
-    setEditValue(urlDisplay);
+    setEditLocal(getLocalUrl());
+    setEditRemote(getRemoteUrl() ?? '');
+    setUrlsSaved(false);
     setEditingUrl(true);
     smoothLayout();
     animateUrlScale(1.35);
   };
 
   const commitUrl = () => {
-    const next = normalizeBaseUrl(editValue);
-    setBaseUrl(next, true).then(() => {
-      setUrlDisplay(next);
+    const local = normalizeBaseUrl(editLocal);
+    const remote = editRemote.trim() ? normalizeBaseUrl(editRemote) : null;
+    (async () => {
+      await setBaseUrl(local, false);
+      await setRemoteUrl(remote, true);
+      setUrlDisplay(getBaseUrl());
       setError(null);
-      setEditingUrl(false);
+      setUrlsSaved(true);
       smoothLayout();
       animateUrlScale(1);
-    });
+      setTimeout(() => setEditingUrl(false), 500);
+    })();
   };
 
   const cancelUrl = () => {
@@ -260,24 +290,54 @@ export function LoginScreen() {
               style={[styles.modalCard, { backgroundColor: colors.card, borderColor: colors.border }]}
               onPress={(e) => e.stopPropagation()}
             >
-              <Text style={[styles.modalTitle, { color: colors.text }]}>Адрес роутера</Text>
-              <View style={[styles.modalField, { borderColor: colors.divider, backgroundColor: colors.inputBg }]}>
-                <TextInput
-                  value={editValue}
-                  onChangeText={setEditValue}
-                  placeholder="https://…/rci/"
-                  placeholderTextColor={colors.textMuted}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  keyboardType="url"
-                  selectTextOnFocus
-                  style={{ flex: 1, fontFamily: FONT.regular, fontSize: 15, color: colors.text, paddingHorizontal: 12 }}
-                  autoFocus
-                />
-              </View>
-              <Text style={[styles.modalHint, { color: colors.textSecondary }]}>
-                Будет сохранён и использован при входе.
-              </Text>
+              <ScrollView style={{ maxHeight: 420 }} showsVerticalScrollIndicator={false}>
+                <Text style={[styles.modalTitle, { color: colors.text }]}>Адреса роутера</Text>
+
+                <Text style={[styles.fieldLabel, { color: colors.textSecondary }]}>Домашняя сеть (приоритет)</Text>
+                <View style={[styles.modalField, { borderColor: colors.divider, backgroundColor: colors.inputBg }]}>
+                  <TextInput
+                    value={editLocal}
+                    onChangeText={setEditLocal}
+                    placeholder="http://my.keenetic.net/rci/"
+                    placeholderTextColor={colors.textMuted}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    keyboardType="url"
+                    selectTextOnFocus
+                    autoFocus
+                    style={{ flex: 1, fontFamily: FONT.regular, fontSize: 15, color: colors.text, paddingHorizontal: 12 }}
+                  />
+                </View>
+                <Text style={[styles.modalHint, { color: colors.textSecondary }]}>
+                  Используется, когда телефон подключён к домашней сети.
+                </Text>
+
+                <Text style={[styles.fieldLabel, { color: colors.textSecondary, marginTop: Spacing.md }]}>
+                  Внешняя ссылка (KeenDNS)
+                </Text>
+                <View style={[styles.modalField, { borderColor: colors.divider, backgroundColor: colors.inputBg }]}>
+                  <TextInput
+                    value={editRemote}
+                    onChangeText={setEditRemote}
+                    placeholder="https://имя.keenetic.link/rci/"
+                    placeholderTextColor={colors.textMuted}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    keyboardType="url"
+                    selectTextOnFocus
+                    style={{ flex: 1, fontFamily: FONT.regular, fontSize: 15, color: colors.text, paddingHorizontal: 12 }}
+                  />
+                </View>
+                <Text style={[styles.modalHint, { color: colors.textSecondary }]}>
+                  Применяется, когда домашняя сеть недоступна. Можно оставить пустым.
+                </Text>
+                {urlsSaved ? (
+                  <Text style={{ fontFamily: FONT.medium, fontSize: 12, color: colors.online, marginTop: Spacing.sm }}>
+                    Сохранено ✓
+                  </Text>
+                ) : null}
+              </ScrollView>
+
               <View style={styles.modalActions}>
                 <Pressable onPress={cancelUrl} style={[styles.modalBtn, { borderColor: colors.border }]}>
                   <Text style={[styles.modalBtnLabel, { color: colors.textSecondary }]}>Отмена</Text>
@@ -477,8 +537,13 @@ const styles = StyleSheet.create({
   },
   modalHint: {
     fontFamily: FONT.regular,
-    fontSize: 12,
-    marginTop: Spacing.sm,
+    fontSize: 11.5,
+    marginTop: 6,
+  },
+  fieldLabel: {
+    fontFamily: FONT.medium,
+    fontSize: 12.5,
+    marginBottom: 6,
   },
   modalActions: {
     flexDirection: 'row',
