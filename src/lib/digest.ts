@@ -135,6 +135,10 @@ export async function digestFetch(url: string, opts: DigestFetchOptions): Promis
     throw new NetworkError(msg);
   }
 
+  if (result.error === 'wrong_address') {
+    throw new NetworkError(result.detail || 'По указанному адресу роутер не найден.');
+  }
+
   if (result.error === 'auth_not_supported') {
     throw new AuthError(result.detail || 'Роутер не сообщил параметры авторизации.');
   }

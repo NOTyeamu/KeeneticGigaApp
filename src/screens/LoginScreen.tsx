@@ -17,6 +17,7 @@ import {
   View,
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
+import * as Clipboard from 'expo-clipboard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
@@ -65,6 +66,7 @@ export function LoginScreen() {
   const [editLocal, setEditLocal] = useState(getLocalUrl());
   const [editRemote, setEditRemote] = useState(getRemoteUrl() ?? '');
   const [urlsSaved, setUrlsSaved] = useState(false);
+  const [errorCopied, setErrorCopied] = useState(false);
   const urlScale = useRef(new Animated.Value(1)).current;
 
   // About modal.
@@ -141,6 +143,27 @@ export function LoginScreen() {
     setEditingUrl(false);
     smoothLayout();
     animateUrlScale(1);
+  };
+
+  /** Копирует текст ошибки вместе с адресом — удобно прислать для разбора. */
+  const copyError = async () => {
+    if (!error) return;
+    const text = [
+      error,
+      '',
+      `Адрес: ${getBaseUrl()}`,
+      `Домашний адрес: ${getLocalUrl()}`,
+      getRemoteUrl() ? `Внешняя ссылка: ${getRemoteUrl()}` : 'Внешняя ссылка: не задана',
+      `Версия приложения: ${getAppVersion()}`,
+    ].join('\n');
+    try {
+      await Clipboard.setStringAsync(text);
+    } catch {
+      return;
+    }
+    haptic(18);
+    setErrorCopied(true);
+    setTimeout(() => setErrorCopied(false), 1600);
   };
 
   const urlColor = colors.textMuted;
@@ -229,10 +252,37 @@ export function LoginScreen() {
         </View>
 
         {error ? (
-          <View style={[styles.errorBox, { backgroundColor: 'rgba(255,92,92,0.10)', borderColor: colors.danger }]}>
+          <Pressable
+            onPress={copyError}
+            onLongPress={copyError}
+            delayLongPress={300}
+            android_ripple={{ color: colors.danger }}
+            style={[styles.errorBox, { backgroundColor: 'rgba(255,92,92,0.10)', borderColor: colors.danger }]}
+            accessibilityRole="button"
+            accessibilityLabel="Скопировать текст ошибки"
+          >
             <Ionicons name="alert-circle-outline" size={16} color={colors.danger} />
-            <Text style={{ flex: 1, fontFamily: FONT.regular, fontSize: 13, color: colors.danger, marginLeft: 8 }}>{error}</Text>
-          </View>
+            <Text style={{ flex: 1, fontFamily: FONT.regular, fontSize: 13, color: colors.danger, marginLeft: 8 }}>
+              {error}
+            </Text>
+            <View style={styles.copyBtn}>
+              <Ionicons
+                name={errorCopied ? 'checkmark' : 'copy-outline'}
+                size={15}
+                color={errorCopied ? colors.online : colors.danger}
+              />
+              <Text
+                style={{
+                  fontFamily: FONT.medium,
+                  fontSize: 11,
+                  color: errorCopied ? colors.online : colors.danger,
+                  marginLeft: 4,
+                }}
+              >
+                {errorCopied ? 'Скопировано' : 'Копировать'}
+              </Text>
+            </View>
+          </Pressable>
         ) : null}
 
         {/* ── Login button ── */}
@@ -544,6 +594,14 @@ const styles = StyleSheet.create({
     fontFamily: FONT.medium,
     fontSize: 12.5,
     marginBottom: 6,
+  },
+  copyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingLeft: 10,
+    marginLeft: 6,
+    borderLeftWidth: StyleSheet.hairlineWidth,
+    borderLeftColor: 'rgba(255,92,92,0.4)',
   },
   modalActions: {
     flexDirection: 'row',

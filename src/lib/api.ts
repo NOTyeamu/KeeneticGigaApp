@@ -9,11 +9,18 @@ import {
 import { Storage } from './storage';
 
 /**
- * Адрес по умолчанию — стандартный локальный адрес роутеров Keenetic, а не
- * чей-то конкретный. Реальный адрес вводится на экране входа и хранится
- * только на устройстве, поэтому в исходниках и в APK его нет.
+ * Домашний адрес по умолчанию — типовой адрес роутеров Keenetic в локальной
+ * сети. Пользователь может его изменить на экране входа; хранится только на
+ * устройстве, поэтому в исходниках и в APK чужих адресов нет.
  */
-export const DEFAULT_BASE_URL = 'http://my.keenetic.net/rci/';
+export const DEFAULT_BASE_URL = 'http://192.168.0.1/rci/';
+
+/**
+ * Запасной домашний адрес: то же устройство по своему доменному имени.
+ * Keenetic отвечает на него из локальной сети даже если адрес подсети
+ * изменён, поэтому он используется, когда основной адрес не отвечает.
+ */
+export const ALT_LOCAL_URLS = ['http://my.keenetic.net/rci/'];
 
 /** Приводит адрес к виду <origin>/auth — по нему проверяется доступность. */
 function authEndpoint(baseUrl: string): string {
@@ -86,14 +93,20 @@ export async function resolveRoute(force = false): Promise<boolean> {
   // Уже проверяли и адрес отвечает — не тратим время на повторную проверку.
   if (!force && routeReason === 'ok') return true;
 
-  const localOk = await probeUrl(authEndpoint(localUrl), PROBE_TIMEOUT_MS);
-  // Домашним считаем только ответ самого роутера: у my.keenetic.net есть
-  // публичная DNS-запись, и вне дома он отвечает, но не является роутером.
-  if (localOk.reachable && localOk.local !== false) {
-    baseUrl = localUrl;
-    routeKind = 'local';
-    routeReason = 'ok';
-    return true;
+  // Перебираем домашние адреса: основной и запасной по доменному имени.
+  // Запасной выручает, если адрес подсети на роутере изменён.
+  const localCandidates = [localUrl, ...ALT_LOCAL_URLS.filter((u) => normalizeBaseUrl(u) !== localUrl)];
+  for (const candidate of localCandidates) {
+    const localOk = await probeUrl(authEndpoint(candidate), PROBE_TIMEOUT_MS);
+    // Домашним считаем только ответ самого роутера: у my.keenetic.net есть
+    // публичная DNS-запись, и вне дома он отвечает, но не является роутером.
+    if (localOk.reachable && localOk.local !== false) {
+      localUrl = candidate;
+      baseUrl = candidate;
+      routeKind = 'local';
+      routeReason = 'ok';
+      return true;
+    }
   }
 
   if (remoteUrl) {

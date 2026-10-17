@@ -2,7 +2,6 @@ package expo.modules.digesthttp
 
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
-import okhttp3.Authenticator
 import okhttp3.Cookie
 import okhttp3.CookieJar
 import okhttp3.HttpUrl
@@ -11,14 +10,11 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
-import okhttp3.Response
-import okhttp3.Route
 import java.security.MessageDigest
 import java.security.SecureRandom
 import java.security.cert.X509Certificate
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicInteger
 import javax.net.ssl.SSLContext
 import javax.net.ssl.X509TrustManager
 
@@ -67,158 +63,11 @@ class DigestHttpModule : Module() {
   }
 }
 
-/**
- * Обычная HTTP Digest-авторизация (RFC 2617/7616).
- *
- * Нужна для доступа через KeenDNS-облако: в отличие от домашней сети, облако
- * не передаёт заголовки `X-NDM-Realm`/`X-NDM-Challenge`, по которым работает
- * схема NDW2, а отвечает стандартным `WWW-Authenticate: Digest ...`.
- *
- * Поддерживаются MD5, MD5-sess, SHA-256 и SHA-256-sess, а также `qop=auth`
- * (с nonce-count) и `auth-int`. Учётные данные подставляет OkHttp через
- * `Credentials` из запроса.
- */
-/** Учётные данные, привязанные к запросу (тег), чтобы их увидел Authenticator. */
-private data class RouterCredentials(val user: String, val pass: String)
-
-private class DigestAuthenticator : Authenticator {
-  private val nonceCount = AtomicInteger(1)
-
-  override fun authenticate(route: Route?, response: Response): Request? {
-    // Повторяем только один раз на запрос — иначе возможен бесконечный цикл.
-    if (responseCount(response) >= 2) return null
-
-    val credentials = response.request.tag(RouterCredentials::class.java) ?: return null
-
-    val header = response.headers("WWW-Authenticate")
-      .firstOrNull { it.trim().startsWith("Digest", ignoreCase = true) }
-      ?: return null
-
-    val params = parseChallenge(header)
-    val realm = params["realm"] ?: return null
-    val nonce = params["nonce"] ?: return null
-
-    val algorithm = (params["algorithm"] ?: "MD5").uppercase()
-    val opaque = params["opaque"]
-    val qopOptions = params["qop"]?.split(',')?.map { it.trim().lowercase() } ?: emptyList()
-    val qop = when {
-      qopOptions.contains("auth") -> "auth"
-      qopOptions.contains("auth-int") -> "auth-int"
-      else -> null
-    }
-
-    val user = credentials.user
-    val pass = credentials.pass
-
-    val uri = response.request.url.encodedPath +
-      (response.request.url.encodedQuery?.let { "?$it" } ?: "")
-
-    val method = response.request.method
-
-    // cnonce нужен и для qop, и для схем *-SESS, поэтому считаем его заранее.
-    val cnonce = newCnonce()
-    val isSess = algorithm.endsWith("-SESS")
-    val baseAlgorithm = if (isSess) algorithm.removeSuffix("-SESS") else algorithm
-    fun digestFn(input: String): String = hash(baseAlgorithm, input)
-
-    val ha1 = if (isSess) {
-      digestFn("${digestFn("$user:$realm:$pass")}:$nonce:$cnonce")
-    } else {
-      digestFn("$user:$realm:$pass")
-    }
-
-    val ha2 = if (qop == "auth-int") {
-      // Тело хешируется как есть, сырыми байтами.
-      val entity = response.request.body?.let { body ->
-        val buffer = okio.Buffer()
-        body.writeTo(buffer)
-        hashBytes(baseAlgorithm, buffer.readByteArray())
-      } ?: hash(baseAlgorithm, "")
-      digestFn("$method:$uri:$entity")
-    } else {
-      digestFn("$method:$uri")
-    }
-
-    val nc = String.format("%08x", nonceCount.getAndIncrement())
-
-    val digestValue = if (qop != null) {
-      digestFn("$ha1:$nonce:$nc:$cnonce:$qop:$ha2")
-    } else {
-      digestFn("$ha1:$nonce:$ha2")
-    }
-
-    val authValue = buildString {
-      append("Digest username=\"").append(quote(user)).append("\", ")
-      append("realm=\"").append(quote(realm)).append("\", ")
-      append("nonce=\"").append(quote(nonce)).append("\", ")
-      append("uri=\"").append(uri).append("\", ")
-      append("response=\"").append(digestValue).append("\"")
-      if (algorithm.isNotEmpty()) append(", algorithm=").append(algorithm)
-      if (opaque != null) append(", opaque=\"").append(quote(opaque)).append("\"")
-      if (qop != null) {
-        append(", qop=").append(qop)
-        append(", nc=").append(nc)
-        append(", cnonce=\"").append(cnonce).append("\"")
-      }
-    }
-
-    return response.request.newBuilder()
-      .header("Authorization", authValue)
-      .build()
-  }
-
-  /** Сколько раз запрос уже повторяли с этой авторизацией. */
-  private fun responseCount(response: Response): Int {
-    var count = 1
-    var prior = response.priorResponse
-    while (prior != null) {
-      count++
-      prior = prior.priorResponse
-    }
-    return count
-  }
-
-  private fun parseChallenge(header: String): Map<String, String> {
-    val out = HashMap<String, String>()
-    val body = header.substringAfter(' ', "")
-    val regex = Regex("""([A-Za-z0-9_-]+)\s*=\s*"([^"]*)"|([A-Za-z0-9_-]+)\s*=\s*([^,\s]+)""")
-    for (m in regex.findAll(body)) {
-      val key = (if (m.groupValues[1].isNotEmpty()) m.groupValues[1] else m.groupValues[3]).lowercase()
-      val value = if (m.groupValues[2].isNotEmpty()) m.groupValues[2] else m.groupValues[4]
-      if (key.isNotEmpty()) out[key] = value
-    }
-    return out
-  }
-
-  private fun hash(algorithm: String, input: String): String =
-    hashBytes(algorithm, input.toByteArray(Charsets.UTF_8))
-
-  private fun hashBytes(algorithm: String, input: ByteArray): String {
-    val name = when {
-      algorithm.contains("SHA-512") -> "SHA-512"
-      algorithm.contains("SHA-256") -> "SHA-256"
-      else -> "MD5"
-    }
-    return MessageDigest.getInstance(name).digest(input).joinToString("") { "%02x".format(it) }
-  }
-
-  private fun newCnonce(): String {
-    val bytes = ByteArray(8)
-    SecureRandom().nextBytes(bytes)
-    return bytes.joinToString("") { "%02x".format(it) }
-  }
-
-  private fun quote(v: String): String = v.replace("\\", "\\\\").replace("\"", "\\\"")
-}
-
 private object RouterClient {
   private val JSON = "application/json; charset=utf-8".toMediaType()
 
   /** Ориги, на которых текущая сессия уже подтверждена. */
   private val authedOrigins: MutableSet<String> = ConcurrentHashMap.newKeySet()
-
-  /** Ориги, где роутер отвечает обычным HTTP Digest (KeenDNS-облако). */
-  private val digestOnlyOrigins: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
   private val cookieJar = object : CookieJar {
     private val store = ConcurrentHashMap<String, MutableList<Cookie>>()
@@ -259,9 +108,6 @@ private object RouterClient {
     }
     OkHttpClient.Builder()
       .cookieJar(cookieJar)
-      // Авторизация через KeenDNS-облако идёт обычной HTTP Digest-схемой,
-      // а не NDW2 с заголовками X-NDM-*: облако их не пропускает.
-      .authenticator(DigestAuthenticator())
       .sslSocketFactory(sslContext.socketFactory, trustAll)
       .hostnameVerifier { _, _ -> true }
       .connectTimeout(20, TimeUnit.SECONDS)
@@ -310,7 +156,7 @@ private object RouterClient {
 
     // 401 после первой попытки означает, что сессия NDW2 ещё не установлена
     // (или истекла) — авторизуемся и повторяем один раз.
-    if (response.status == 401 && user.isNotEmpty() && !digestOnlyOrigins.contains(origin)) {
+    if (response.status == 401 && user.isNotEmpty()) {
       authedOrigins.remove(origin)
       val authError = handshake(origin, user, pass)
       if (authError != null) return authError.toJs()
@@ -353,8 +199,6 @@ private object RouterClient {
     return try {
       val builder = Request.Builder().url(url)
       headers.forEach { (k, v) -> builder.header(k, v) }
-      // Учётные данные видны DigestAuthenticator через тег запроса.
-      if (user.isNotEmpty()) builder.tag(RouterCredentials::class.java, RouterCredentials(user, pass))
 
       val requestBody = when {
         body != null -> body.toRequestBody(JSON)
@@ -386,11 +230,8 @@ private object RouterClient {
       ?: return networkFailure(IllegalArgumentException("Некорректный адрес роутера."))
 
     val challengeResp = try {
-      // Учётные данные в теге: если роутер ответит 401 с обычным Digest,
-      // его обработает DigestAuthenticator и вернёт уже успешный ответ.
       val request = Request.Builder()
         .url(authUrl)
-        .tag(RouterCredentials::class.java, RouterCredentials(user, pass))
         .get()
         .build()
       client.newCall(request).execute()
@@ -427,38 +268,43 @@ private object RouterClient {
       val challenge = resp.header("X-NDM-Challenge") ?: ndw2?.get("challenge")
 
       if (challenge == null) {
-        // Схемы NDW2 нет, но роутер предлагает обычный HTTP Digest — так
-        // отвечает KeenDNS-облако, не пропускающее заголовки X-NDM-*.
-        // В этом случае не мешаем: запрос повторит DigestAuthenticator.
-        val hasDigest = parsedList.any {
-          (it["scheme"] ?: "").startsWith("Digest", ignoreCase = true)
-        }
-        if (hasDigest) {
-          // Схема NDW2 здесь не применима: авторизацию выполняет
-          // DigestAuthenticator, поэтому просто пропускаем запрос дальше.
-          digestOnlyOrigins.add(origin)
-          return null
-        }
-
-        // Диагностика: показываем, что реально ответил роутер, чтобы причину
-        // было видно по тексту ошибки, а не догадываться.
+        // Здесь важно не сваливать всё в «схема не поддерживается»: чаще всего
+        // причина куда прозаичнее, и разные случаи надо различать.
         val present = resp.headers.names().joinToString(", ").lowercase()
         val schemes = parsedList.mapNotNull { it["scheme"] }.distinct()
         val redirect = describeRedirect(authUrl, resp.request.url)
-        val hint = when {
-          schemes.isNotEmpty() -> "роутер предлагает только схемы: ${schemes.joinToString(", ")}"
-          wwwList.isNotEmpty() -> "заголовок WWW-Authenticate: ${wwwList.joinToString(" | ")}"
-          resp.code == 401 -> "роутер не сообщил параметры авторизации"
-          else -> "ответ HTTP ${resp.code}"
-        }
+        val host = resp.request.url.host
         val where = if (redirect.isNotEmpty()) " ($redirect)" else ""
-        return HttpResult(
-          status = resp.code,
-          headers = emptyMap(),
-          body = "",
-          error = "auth_not_supported",
-          detail = "Авторизация недоступна$where: $hint. Заголовки ответа: $present",
-        )
+
+        // 404 и подобные ответы означают, что по адресу отвечает вовсе не
+        // роутер (например, чужой сайт или поддомен с другим сервисом).
+        val looksNotRouter = resp.code == 404 || resp.code == 502 || resp.code == 503
+
+        return if (looksNotRouter) {
+          HttpResult(
+            status = resp.code,
+            headers = emptyMap(),
+            body = "",
+            error = "wrong_address",
+            detail = "По адресу $host роутер не найден (ответ HTTP ${resp.code})." +
+              " Проверьте адрес: обычно это ссылка вида https://имя.keenetic.link" +
+              " или локальный адрес роутера.",
+          )
+        } else {
+          val hint = when {
+            schemes.isNotEmpty() -> "роутер предлагает только схемы: ${schemes.joinToString(", ")}"
+            wwwList.isNotEmpty() -> "заголовок WWW-Authenticate: ${wwwList.joinToString(" | ")}"
+            resp.code == 401 -> "роутер не сообщил параметры авторизации"
+            else -> "ответ HTTP ${resp.code}"
+          }
+          HttpResult(
+            status = resp.code,
+            headers = emptyMap(),
+            body = "",
+            error = "auth_not_supported",
+            detail = "Авторизация недоступна$where: $hint. Заголовки ответа: $present",
+          )
+        }
       }
 
       val md5Hex = md5Hex("$user:${realm ?: ""}:$pass")
