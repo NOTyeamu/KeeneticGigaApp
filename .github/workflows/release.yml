@@ -160,10 +160,15 @@ jobs:
           if [ -n "$KEYSTORE_B64" ]; then
             echo "Keystore: постоянный (из секрета)"
             STORE_PASS="${KEYSTORE_PASSWORD:-keeneticgiga}"
-            # tr убирает ВСЕ пробельные символы, включая перевод строки,
-            # который секрет получает при сохранении, — иначе base64 ругается
-            # на «invalid input».
-            printf '%s' "$KEYSTORE_B64" | tr -d '\r\n\t ' | base64 -d > release.jks
+            # Вырезаем только символы base64: так значение не ломается ни от
+            # переводов строки, ни от посторонних символов, которые легко
+            # попадают в секрет при сохранении.
+            printf '%s' "$KEYSTORE_B64" | tr -cd 'A-Za-z0-9+/=' > keystore.b64
+            echo "base64: $(wc -c < keystore.b64) символов"
+            if ! base64 -d < keystore.b64 > release.jks 2>/dev/null; then
+              # На случай, если стандартный декодер не справился.
+              python3 -c "import base64,sys;open('release.jks','wb').write(base64.b64decode(open('keystore.b64').read()))" || true
+            fi
             if [ ! -s release.jks ]; then
               echo "Не удалось разобрать keystore из секрета ANDROID_KEYSTORE_B64"
               exit 1
