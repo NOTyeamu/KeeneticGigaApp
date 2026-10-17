@@ -1,12 +1,12 @@
-import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Switch, Text, TextInput, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useEffect, useState } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
-import { getBaseUrl, getRouteInfo } from '../lib/api';
-import { getAppVersion } from '../lib/version';
+import { getBaseUrl, getRouteInfo, getRemoteUrl, setRemoteUrl, normalizeBaseUrl } from '../lib/api';
+import { getAppVersion, checkForAppUpdate } from '../lib/version';
 import { MANAGEMENT_ITEMS, type SubItem } from '../data/sections';
 import { FONT, Radius, Spacing } from '../theme/colors';
 import { ListButton } from '../components/ListButton';
@@ -21,9 +21,55 @@ export function SettingsScreen() {
   const alert = useAlert();
   const [url, setUrl] = useState(getBaseUrl());
   const [route, setRoute] = useState(getRouteInfo());
+  /** Публичная ссылка на роутер — её же показываем под размытием. */
+  const [remoteAddress, setRemoteAddress] = useState(getRemoteUrl());
+  const [remoteDraft, setRemoteDraft] = useState('');
+  const [editingRemote, setEditingRemote] = useState(false);
+  const [savingRemote, setSavingRemote] = useState(false);
+  const [remoteError, setRemoteError] = useState<string | null>(null);
+  /** Новая версия в репозитории — рядом с пунктом «Обновление системы». */
+  const [updateVersion, setUpdateVersion] = useState<string | null>(null);
+
   useEffect(() => {
     setUrl(getBaseUrl());
     setRoute(getRouteInfo());
+    setRemoteAddress(getRemoteUrl());
+  }, []);
+
+  const saveRemote = async () => {
+    const draft = remoteDraft.trim();
+    if (!draft) return;
+    haptic();
+    setSavingRemote(true);
+    setRemoteError(null);
+    try {
+      await setRemoteUrl(normalizeBaseUrl(draft));
+      const saved = getRemoteUrl();
+      setRemoteAddress(saved);
+      setRemoteDraft('');
+      setEditingRemote(false);
+      setUrl(getBaseUrl());
+      setRoute(getRouteInfo());
+    } catch (e: any) {
+      setRemoteError(e?.message ?? 'Не удалось сохранить адрес.');
+    } finally {
+      setSavingRemote(false);
+    }
+  };
+
+  // Проверяем обновления при открытии настроек: тихо, без диалогов.
+  useEffect(() => {
+    let alive = true;
+    checkForAppUpdate()
+      .then((r) => {
+        if (alive && r.hasUpdate) setUpdateVersion(r.latest.version);
+      })
+      .catch(() => {
+        // нет сети или репозиторий недоступен — просто не показываем значок
+      });
+    return () => {
+      alive = false;
+    };
   }, []);
 
   const pickLanguage = () => {
@@ -91,25 +137,108 @@ export function SettingsScreen() {
         <View style={[styles.row, { borderBottomColor: colors.divider, alignItems: 'flex-start' }]}>
           <View style={{ flex: 1, marginRight: Spacing.sm }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-              <Ionicons name="server-outline" size={15} color={colors.textSecondary} />
+              <Ionicons name="globe-outline" size={15} color={colors.textSecondary} />
               <Text style={{ fontFamily: FONT.medium, fontSize: 15, color: colors.text }}>Адрес роутера</Text>
-              <View
-                style={{
-                  backgroundColor: colors.accentSoft,
-                  borderRadius: Radius.pill,
-                  paddingHorizontal: 8,
-                  paddingVertical: 2,
-                }}
-              >
-                <Text style={{ fontFamily: FONT.medium, fontSize: 10, color: colors.accent }}>
-                  {route.kind === 'local' ? 'ДОМАШНЯЯ СЕТЬ' : 'ВНЕШНЯЯ ССЫЛКА'}
-                </Text>
-              </View>
+              {remoteAddress ? (
+                <View
+                  style={{
+                    backgroundColor: colors.accentSoft,
+                    borderRadius: Radius.pill,
+                    paddingHorizontal: 8,
+                    paddingVertical: 2,
+                  }}
+                >
+                  <Text style={{ fontFamily: FONT.medium, fontSize: 10, color: colors.accent }}>
+                    ВНЕШНЯЯ ССЫЛКА
+                  </Text>
+                </View>
+              ) : null}
             </View>
-            <HiddenValue value={url} hint="Нажмите, чтобы показать · удерживайте, чтобы скопировать" />
+
+            {/* Под размытием — только публичная ссылка на роутер. */}
+            {remoteAddress ? (
+              <HiddenValue
+                value={remoteAddress}
+                hint="Нажмите, чтобы показать · удерживайте, чтобы скопировать"
+              />
+            ) : (
+              <>
+                <Text style={{ fontFamily: FONT.regular, fontSize: 12.5, color: colors.textSecondary, marginBottom: 8 }}>
+                  Внешняя ссылка не задана. Без неё приложение подключается только к домашней сети — добавьте её,
+                  чтобы управлять роутером из любой сети.
+                </Text>
+                <View
+                  style={[
+                    styles.inlineField,
+                    { backgroundColor: colors.inputBg, borderColor: remoteError ? colors.danger : colors.border },
+                  ]}
+                >
+                  <TextInput
+                    value={remoteDraft}
+                    onChangeText={setRemoteDraft}
+                    placeholder="https://имя.keenetic.link/rci/"
+                    placeholderTextColor={colors.textMuted}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    keyboardType="url"
+                    style={{ flex: 1, fontFamily: FONT.regular, fontSize: 14, color: colors.text, paddingHorizontal: 10 }}
+                  />
+                  <Pressable
+                    onPress={saveRemote}
+                    disabled={savingRemote || !remoteDraft.trim()}
+                    android_ripple={{ color: colors.accentSoft }}
+                    style={[
+                      styles.inlineSave,
+                      {
+                        backgroundColor: remoteDraft.trim() ? colors.accent : colors.divider,
+                        opacity: savingRemote ? 0.6 : 1,
+                      },
+                    ]}
+                  >
+                    <Ionicons name="checkmark" size={16} color="#FFFFFF" />
+                  </Pressable>
+                </View>
+                {remoteError ? (
+                  <Text style={{ fontFamily: FONT.regular, fontSize: 11.5, color: colors.danger, marginTop: 6 }}>
+                    {remoteError}
+                  </Text>
+                ) : null}
+              </>
+            )}
+
+            {/* Запасной путь: добавить ссылку, когда адрес уже показывается. */}
+            {remoteAddress && editingRemote ? (
+              <View
+                style={[
+                  styles.inlineField,
+                  { backgroundColor: colors.inputBg, borderColor: colors.border, marginTop: 10 },
+                ]}
+              >
+                <TextInput
+                  value={remoteDraft}
+                  onChangeText={setRemoteDraft}
+                  placeholder="https://имя.keenetic.link/rci/"
+                  placeholderTextColor={colors.textMuted}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="url"
+                  autoFocus
+                  style={{ flex: 1, fontFamily: FONT.regular, fontSize: 14, color: colors.text, paddingHorizontal: 10 }}
+                />
+                <Pressable
+                  onPress={saveRemote}
+                  disabled={savingRemote}
+                  android_ripple={{ color: colors.accentSoft }}
+                  style={[styles.inlineSave, { backgroundColor: colors.accent, opacity: savingRemote ? 0.6 : 1 }]}
+                >
+                  <Ionicons name="checkmark" size={16} color="#FFFFFF" />
+                </Pressable>
+              </View>
+            ) : null}
+
             {route.reason === 'unreachable' ? (
               <Text style={{ fontFamily: FONT.regular, fontSize: 11.5, color: colors.danger, marginTop: 6 }}>
-                Роутер не отвечает по этому адресу
+                Роутер не отвечает ни по домашнему адресу, ни по внешней ссылке
               </Text>
             ) : null}
           </View>
@@ -160,20 +289,32 @@ export function SettingsScreen() {
 
       <SectionLabel colors={colors}>Обслуживание роутера</SectionLabel>
       <View style={[styles.group, { borderColor: colors.border, backgroundColor: colors.card }]}>
-        {MANAGEMENT_ITEMS.map((item, i) => (
-          <View key={item.id}>
-            <ListButton
-              title={item.title}
-              icon={item.icon}
-              first={i === 0}
-              last={i === MANAGEMENT_ITEMS.length - 1}
-              onPress={() => openMaintenance(item)}
-            />
-            {i < MANAGEMENT_ITEMS.length - 1 ? (
-              <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: colors.divider, marginLeft: 58 }} />
-            ) : null}
-          </View>
-        ))}
+        {MANAGEMENT_ITEMS.map((item, i) => {
+          const hasUpdate = item.id === 'system-update' && updateVersion !== null;
+          return (
+            <View key={item.id}>
+              <ListButton
+                title={item.title}
+                icon={item.icon}
+                subtitle={hasUpdate ? `Доступна версия ${updateVersion}` : undefined}
+                first={i === 0}
+                last={i === MANAGEMENT_ITEMS.length - 1}
+                right={
+                  hasUpdate ? (
+                    <View style={[styles.updateBadge, { backgroundColor: colors.accent }]}>
+                      <Ionicons name="arrow-up" size={11} color="#FFFFFF" />
+                      <Text style={styles.updateBadgeText}>Есть обновление</Text>
+                    </View>
+                  ) : undefined
+                }
+                onPress={() => openMaintenance(item)}
+              />
+              {i < MANAGEMENT_ITEMS.length - 1 ? (
+                <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: colors.divider, marginLeft: 58 }} />
+              ) : null}
+            </View>
+          );
+        })}
       </View>
 
       <SectionLabel colors={colors}>Приложение</SectionLabel>
@@ -244,5 +385,33 @@ const styles = StyleSheet.create({
     height: 54,
     borderRadius: Radius.md,
     borderWidth: StyleSheet.hairlineWidth,
+  },
+  inlineField: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    height: 42,
+    borderRadius: Radius.sm,
+    borderWidth: StyleSheet.hairlineWidth,
+    overflow: 'hidden',
+  },
+  inlineSave: {
+    width: 44,
+    height: '100%',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  updateBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    borderRadius: Radius.pill,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+  },
+  updateBadgeText: {
+    fontFamily: FONT.semiBold,
+    fontSize: 10,
+    color: '#FFFFFF',
+    letterSpacing: 0.3,
   },
 });

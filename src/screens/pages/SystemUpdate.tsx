@@ -1,46 +1,46 @@
 import { useState } from 'react';
-import { Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { Row } from '../../components/Row';
 import { LoadingState, ErrorState, EmptyState } from '../../components/States';
 import { PageCard } from '../../components/PageParts';
+import { UpdateProgress } from '../../components/UpdateProgress';
 import { useApi } from '../../hooks/useApi';
 import { useCreds } from '../../hooks/useCreds';
 import { Api, toArray } from '../../lib/api';
-import { checkForAppUpdate, getAppVersion, APP_RELEASES_URL, type UpdateCheckResult } from '../../lib/version';
+import { getAppVersion, APP_RELEASES_URL, type UpdateCheckResult } from '../../lib/version';
+import { checkUpdate, downloadAndInstall } from '../../lib/updater';
 import { useSettings } from '../../context/SettingsContext';
 import { useAlert } from '../../components/AlertDialog';
 import { FONT, Radius, Spacing } from '../../theme/colors';
 
 /**
- * «Обновление системы» — прошивка роутера плюс проверка обновлений самого
- * приложения через GitHub Releases. Репозиторий публичный, поэтому релизы
- * читаются обычным запросом без токена: секретов в сборке нет.
+ * «Обновление системы» — прошивка роутера и обновление самого приложения.
+ *
+ * Приложение умеет обновлять себя: проверяет релизы в репозитории, скачивает
+ * APK с показом прогресса и передаёт его системному установщику. Android
+ * спросит подтверждение — это его защита, обойти её нельзя.
  */
 export default function SystemUpdate() {
   const creds = useCreds();
   const { colors, haptic } = useSettings();
   const alert = useAlert();
   const { data, loading, error, refetch } = useApi('system-update', () => Api.system(creds));
-  const [checking, setChecking] = useState(false);
-  const [appUpdate, setAppUpdate] = useState<UpdateCheckResult | null>(null);
 
-  const checkUpdate = async () => {
+  const [checking, setChecking] = useState(false);
+  const [update, setUpdate] = useState<UpdateCheckResult | null>(null);
+  const [progress, setProgress] = useState<{ p: number | null; written: number; total: number } | null>(null);
+  const [installing, setInstalling] = useState(false);
+
+  const current = getAppVersion();
+
+  const runCheck = async () => {
     haptic();
     setChecking(true);
     try {
-      const result = await checkForAppUpdate();
-      setAppUpdate(result);
-      if (result.hasUpdate) {
-        alert.show({
-          title: 'Доступно обновление',
-          message: `Установлена версия ${result.current}, в репозитории — ${result.latest.version}.`,
-          actions: [
-            { text: 'Позже', style: 'cancel' },
-            { text: 'Открыть', onPress: () => Linking.openURL(result.latest.assetUrl ?? result.latest.url) },
-          ],
-        });
-      } else {
+      const result = await checkUpdate();
+      setUpdate(result);
+      if (!result.hasUpdate) {
         alert.show({
           title: 'Обновлений нет',
           message: `Установлена последняя версия — ${result.current}.`,
@@ -58,57 +58,136 @@ export default function SystemUpdate() {
     }
   };
 
+  const runInstall = async () => {
+    if (!update) return;
+    haptic();
+    setProgress({ p: 0, written: 0, total: 0 });
+    try {
+      await downloadAndInstall(update, (p) => setProgress({ p: p.progress, written: p.written, total: p.total }));
+      setInstalling(true);
+      setProgress(null);
+      alert.show({
+        title: 'Загрузка завершена',
+        message: 'Открыт системный установщик. Подтвердите установку — Android спросит разрешение.',
+        actions: [{ text: 'Понятно' }],
+      });
+    } catch (e: any) {
+      setProgress(null);
+      alert.show({
+        title: 'Не удалось обновить',
+        message: e?.message ?? 'Попробуйте скачать обновление со страницы релизов.',
+        actions: [{ text: 'OK' }],
+      });
+    }
+  };
+
+  const busy = progress != null || installing;
+
   return (
     <View style={{ gap: Spacing.md }}>
-      <View style={[styles.note, { backgroundColor: colors.accentSoft, borderColor: colors.accent }]}>
-        <Ionicons name="information-circle-outline" size={18} color={colors.accent} />
-        <Text style={{ flex: 1, marginLeft: 10, fontFamily: FONT.regular, fontSize: 12.5, lineHeight: 18, color: colors.accent }}>
-          Проверка обновлений приложения идёт через публичный репозиторий проекта. Установка обновлений роутера
-          по-прежнему выполняется в его веб-интерфейсе.
-        </Text>
-      </View>
+      {/* ── Обновление приложения ── */}
+      <PageCard title="Обновление приложения">
+        <Row label="Установленная версия" value={current} />
+        <Row label="Последняя версия" value={update ? update.latest.version : '—'} last />
 
-      <PageCard title="Приложение">
-        <Row label="Установленная версия" value={getAppVersion()} />
-        <Row
-          label="Последняя версия"
-          value={appUpdate ? appUpdate.latest.version : '—'}
-          last
-        />
+        {update?.hasUpdate ? (
+          <View style={[styles.banner, { backgroundColor: colors.accentSoft, borderColor: colors.accent }]}>
+            <Ionicons name="arrow-up-circle" size={20} color={colors.accent} />
+            <View style={{ flex: 1, marginLeft: 10 }}>
+              <Text style={{ fontFamily: FONT.semiBold, fontSize: 14, color: colors.accent }}>
+                Доступна версия {update.latest.version}
+              </Text>
+              {update.latest.notes ? (
+                <Text
+                  style={{ fontFamily: FONT.regular, fontSize: 12, color: colors.accent, marginTop: 3 }}
+                  numberOfLines={4}
+                >
+                  {update.latest.notes.split('\n').filter((l) => l.trim().startsWith('-')).slice(0, 4).join('\n')}
+                </Text>
+              ) : null}
+              {update.latest.assetName ? (
+                <Text style={{ fontFamily: FONT.regular, fontSize: 11, color: colors.accent, marginTop: 4 }}>
+                  {update.latest.assetName}
+                </Text>
+              ) : null}
+            </View>
+          </View>
+        ) : null}
+
+        {progress ? (
+          <View style={{ marginTop: Spacing.sm }}>
+            <UpdateProgress
+              progress={progress.p}
+              written={progress.written}
+              total={progress.total}
+              label="Скачивание обновления"
+            />
+          </View>
+        ) : null}
+
+        {update?.hasUpdate ? (
+          <Pressable
+            onPress={runInstall}
+            disabled={busy}
+            android_ripple={{ color: 'rgba(255,255,255,0.18)' }}
+            style={({ pressed }) => [
+              styles.btn,
+              styles.btnAccent,
+              { backgroundColor: colors.accent, opacity: busy ? 0.6 : pressed ? 0.88 : 1 },
+            ]}
+          >
+            <Ionicons name="download-outline" size={18} color="#FFFFFF" />
+            <Text style={styles.btnAccentText}>
+              {installing ? 'Установщик открыт' : `Обновить до ${update.latest.version}`}
+            </Text>
+          </Pressable>
+        ) : null}
+
+        {update?.hasUpdate && update.latest.assetUrl ? (
+          <Text style={{ fontFamily: FONT.regular, fontSize: 11, color: colors.textMuted, marginTop: 8, textAlign: 'center' }}>
+            Файл загрузится в приложение, затем откроется установщик Android
+          </Text>
+        ) : null}
+
         <Pressable
-          onPress={checkUpdate}
-          disabled={checking}
+          onPress={runCheck}
+          disabled={checking || busy}
           android_ripple={{ color: colors.accentSoft }}
-          style={({ pressed }) => [styles.btn, { backgroundColor: colors.accentSoft, borderColor: colors.accent }, pressed && { opacity: 0.8 }]}
+          style={({ pressed }) => [
+            styles.btn,
+            { backgroundColor: colors.accentSoft, borderColor: colors.accent, opacity: checking ? 0.6 : pressed ? 0.8 : 1 },
+          ]}
         >
-          <Ionicons name="cloud-download-outline" size={18} color={colors.accent} />
+          <Ionicons
+            name={update?.hasUpdate ? 'refresh-outline' : 'cloud-download-outline'}
+            size={18}
+            color={colors.accent}
+          />
           <Text style={{ fontFamily: FONT.semiBold, fontSize: 15, color: colors.accent, marginLeft: 10 }}>
             {checking ? 'Проверка…' : 'Проверить обновления'}
           </Text>
         </Pressable>
-        {appUpdate?.hasUpdate ? (
-          <Pressable
-            onPress={() => Linking.openURL(appUpdate.latest.assetUrl ?? appUpdate.latest.url)}
-            android_ripple={{ color: 'rgba(255,255,255,0.18)' }}
-            style={({ pressed }) => [styles.btn, styles.btnAccent, { backgroundColor: colors.accent, marginTop: Spacing.sm }, pressed && { opacity: 0.85 }]}
-          >
-            <Ionicons name="download-outline" size={18} color="#FFFFFF" />
-            <Text style={{ fontFamily: FONT.semiBold, fontSize: 15, color: '#FFFFFF', marginLeft: 10 }}>
-              Скачать {appUpdate.latest.version}
-            </Text>
-          </Pressable>
-        ) : null}
-        {appUpdate && !appUpdate.hasUpdate ? (
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: Spacing.sm }}>
+
+        {update && !update.hasUpdate ? (
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: Spacing.sm }}>
             <Ionicons name="checkmark-circle" size={16} color={colors.online} />
             <Text style={{ fontFamily: FONT.regular, fontSize: 12, color: colors.online }}>
               Установлена последняя версия
             </Text>
           </View>
         ) : null}
+
+        <Text style={{ fontFamily: FONT.regular, fontSize: 11, color: colors.textMuted, marginTop: 12, textAlign: 'center' }}>
+          Страница релизов: {APP_RELEASES_URL.replace('https://', '')}
+        </Text>
       </PageCard>
 
-      {loading ? <LoadingState /> : error ? <ErrorState message={error} onRetry={refetch} /> : !data ? (
+      {/* ── Прошивка роутера ── */}
+      {loading ? (
+        <LoadingState />
+      ) : error ? (
+        <ErrorState message={error} onRetry={refetch} />
+      ) : !data ? (
         <EmptyState title="Нет данных" subtitle="Сведения о прошивке недоступны." />
       ) : (
         <>
@@ -144,13 +223,14 @@ export default function SystemUpdate() {
 }
 
 const styles = StyleSheet.create({
-  note: {
+  banner: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     paddingHorizontal: 14,
     paddingVertical: 12,
     borderRadius: Radius.md,
     borderWidth: StyleSheet.hairlineWidth,
+    marginTop: Spacing.sm,
   },
   btn: {
     flexDirection: 'row',
@@ -163,5 +243,11 @@ const styles = StyleSheet.create({
   },
   btnAccent: {
     borderWidth: 0,
+  },
+  btnAccentText: {
+    fontFamily: FONT.semiBold,
+    fontSize: 15,
+    color: '#FFFFFF',
+    marginLeft: 10,
   },
 });

@@ -2,22 +2,22 @@ import { useEffect, useRef, useState } from 'react';
 import {
   Animated,
   Easing,
-  LayoutChangeEvent,
   Platform,
   Pressable,
   StyleSheet,
   Text,
   View,
+  type View as ViewType,
 } from 'react-native';
-import { LinearGradient } from 'expo-linear-gradient';
-import { BlurView } from 'expo-blur';
+import { BlurView, BlurTargetView } from 'expo-blur';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { useSettings } from '../context/SettingsContext';
 import { FONT, Radius } from '../theme/colors';
 
-const ANIM_MS = 320;
-const SHINE_MS = 2400;
+const ANIM_MS = 300;
+/** Ядро размытия по умолчанию: заметно, но адрес под ним не читается. */
+const BLUR_INTENSITY = 58;
 
 interface HiddenValueProps {
   value: string;
@@ -25,24 +25,25 @@ interface HiddenValueProps {
 }
 
 /**
- * Значение, скрытое под синей переливающейся панелью.
+ * Адрес роутера, скрытый настоящим размытием (backdrop-blur).
  *
- * Пока адрес скрыт, его текста в разметке нет вообще: вместо него рисуется
- * панель с синим градиентом и бегущим блеском, поэтому подсмотреть нечего —
- * даже если размытие на устройстве не сработает. Касание убирает панель и
- * показывает адрес, повторное касание возвращает её обратно.
+ * Размывается не сам элемент, а то, что находится ЗА ним — как в iOS и
+ * Telegram. Для этого окружение помечается `BlurTargetView`, а наложение
+ * ссылается на него через `blurTarget`; на Android используется реализация
+ * Dimezis/BlurView. Без ссылки на цель размытие молча отключается, поэтому
+ * она здесь обязательна.
  *
- * Долгое нажатие копирует адрес, не раскрывая его на экране.
+ * При касании размытие плавно «сходит»: сила уменьшается до нуля, наложение
+ * уезжает и растворяется, а сам адрес проявляется. Долгое нажатие копирует
+ * адрес, не раскрывая его.
  */
 export function HiddenValue({ value, hint }: HiddenValueProps) {
   const { colors, haptic } = useSettings();
   const [revealed, setRevealed] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [width, setWidth] = useState(0);
 
-  // 0 — панель на месте, 1 — адрес раскрыт.
+  const targetRef = useRef<ViewType>(null);
   const reveal = useRef(new Animated.Value(0)).current;
-  const shine = useRef(new Animated.Value(0)).current;
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const isDark = colors.bg === '#0A0F14';
@@ -53,22 +54,6 @@ export function HiddenValue({ value, hint }: HiddenValueProps) {
     },
     [],
   );
-
-  // Блеск бежит по панели, пока адрес скрыт.
-  useEffect(() => {
-    if (revealed) return;
-    shine.setValue(0);
-    const loop = Animated.loop(
-      Animated.timing(shine, {
-        toValue: 1,
-        duration: SHINE_MS,
-        easing: Easing.inOut(Easing.quad),
-        useNativeDriver: true,
-      }),
-    );
-    loop.start();
-    return () => loop.stop();
-  }, [revealed, shine]);
 
   const toggle = () => {
     haptic();
@@ -94,29 +79,21 @@ export function HiddenValue({ value, hint }: HiddenValueProps) {
     copyTimer.current = setTimeout(() => setCopied(false), 1200);
   };
 
-  const onLayout = (e: LayoutChangeEvent) => {
-    const w = e.nativeEvent.layout.width;
-    if (w > 0 && Math.abs(w - width) > 0.5) setWidth(w);
-  };
-
+  // Пока скрыто — размытие сильное; при раскрытии оно уходит в ноль.
   const veilOpacity = reveal.interpolate({ inputRange: [0, 1], outputRange: [1, 0] });
-  const textOpacity = reveal.interpolate({ inputRange: [0, 0.35, 1], outputRange: [0, 0, 1] });
-  // Панель чуть разъезжается при раскрытии — уход читается как движение.
-  const veilScale = reveal.interpolate({ inputRange: [0, 1], outputRange: [1, 1.06] });
+  const veilScale = reveal.interpolate({ inputRange: [0, 1], outputRange: [1, 1.04] });
+  const textOpacity = reveal.interpolate({ inputRange: [0, 0.4, 1], outputRange: [0, 0, 1] });
 
-  const travel = width > 0 ? width : 240;
-  const shineX = shine.interpolate({ inputRange: [0, 1], outputRange: [-travel, travel] });
-
-  // Глубокий синий по краям и акцент приложения в середине — панель выглядит
-  // частью интерфейса, а не заглушкой.
-  const gradColors: readonly [string, string, ...string[]] = isDark
-    ? ['#062A44', colors.accent, '#062A44']
-    : ['#BFE6FF', colors.accent, '#BFE6FF'];
-  const shineColors: readonly [string, string, ...string[]] = [
-    'transparent',
-    isDark ? 'rgba(180, 230, 255, 0.55)' : 'rgba(255, 255, 255, 0.75)',
-    'transparent',
-  ];
+  // Радиус размытия ведём по кадрам вместе с анимацией раскрытия: подписка на
+  // значение даёт шаги, а состояние перерисовывает само размытие. Так блюр
+  // именно «сходит», а не исчезает рывком.
+  const [blurIntensity, setBlurIntensity] = useState(BLUR_INTENSITY);
+  useEffect(() => {
+    const id = reveal.addListener(({ value }) => {
+      setBlurIntensity(Math.max(0, Math.round(BLUR_INTENSITY * (1 - value))));
+    });
+    return () => reveal.removeListener(id);
+  }, [reveal]);
 
   return (
     <Pressable
@@ -128,52 +105,43 @@ export function HiddenValue({ value, hint }: HiddenValueProps) {
       accessibilityLabel={revealed ? 'Скрыть адрес роутера' : 'Показать адрес роутера'}
       accessibilityHint="Долгое нажатие копирует адрес"
     >
-      <View style={styles.stack} onLayout={onLayout}>
-        {/* Адрес существует в разметке только когда раскрыт. */}
-        <Animated.View style={{ opacity: textOpacity }}>
-          <Text
-            style={[styles.value, { color: copied ? colors.online : colors.text }]}
-            numberOfLines={1}
-            ellipsizeMode="middle"
-          >
-            {copied ? 'Скопировано ✓' : value}
-          </Text>
-        </Animated.View>
+      <View style={styles.stack}>
+        {/* Слой, который размывается: сам адрес. */}
+        <BlurTargetView ref={targetRef} style={styles.stack}>
+          <Animated.View style={{ opacity: textOpacity }}>
+            <Text
+              style={[styles.value, { color: copied ? colors.online : colors.text }]}
+              numberOfLines={1}
+              ellipsizeMode="middle"
+            >
+              {copied ? 'Скопировано ✓' : value}
+            </Text>
+          </Animated.View>
+        </BlurTargetView>
 
-        {/* Панель: ни адреса, ни намёка на него внутри нет. */}
+        {/* Наложение: размывает слой под собой и уезжает при раскрытии. */}
         <Animated.View
           pointerEvents="none"
           style={[styles.veil, { opacity: veilOpacity, transform: [{ scaleX: veilScale }] }]}
         >
-          <LinearGradient
-            colors={gradColors}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={StyleSheet.absoluteFill}
-          />
-
-          {/* Бегущий блеск — панель «переливается». */}
-          <Animated.View style={[styles.shine, { transform: [{ translateX: shineX }] }]}>
-            <LinearGradient
-              colors={shineColors}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 0 }}
-              style={StyleSheet.absoluteFill}
-            />
-          </Animated.View>
-
-          {/* Мягкость поверх градиента; там, где размытие не поддержано,
-              панель всё равно непрозрачная и ничего не выдаёт. */}
           <BlurView
-            intensity={Platform.OS === 'android' ? 26 : 18}
-            tint="dark"
-            experimentalBlurMethod={Platform.OS === 'android' ? 'dimezisBlurView' : undefined}
+            blurTarget={targetRef}
+            intensity={blurIntensity}
+            tint={isDark ? 'dark' : 'light'}
+            blurMethod={Platform.OS === 'android' ? 'dimezisBlurViewSdk31Plus' : undefined}
             style={StyleSheet.absoluteFill}
           />
-
+          {/* Лёгкая вуаль в тон карточки: размытие остаётся размытием, но
+              адрес не просвечивает даже на слабом размытии. */}
+          <View
+            style={[
+              StyleSheet.absoluteFill,
+              { backgroundColor: colors.card, opacity: isDark ? 0.42 : 0.5 },
+            ]}
+          />
           <View style={styles.veilLabel}>
-            <Ionicons name="lock-closed" size={12} color="rgba(255,255,255,0.95)" />
-            <Text style={styles.veilLabelText}>Скрыто</Text>
+            <Ionicons name="eye-off-outline" size={13} color={colors.textSecondary} />
+            <Text style={[styles.veilLabelText, { color: colors.textSecondary }]}>Размыто</Text>
           </View>
         </Animated.View>
       </View>
@@ -199,6 +167,7 @@ const styles = StyleSheet.create({
   value: {
     fontFamily: FONT.medium,
     fontSize: 14,
+    paddingHorizontal: 2,
   },
   veil: {
     position: 'absolute',
@@ -211,22 +180,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  shine: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    width: 120,
-  },
   veilLabel: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 5,
   },
   veilLabelText: {
     fontFamily: FONT.medium,
-    fontSize: 12,
-    letterSpacing: 0.6,
-    color: 'rgba(255,255,255,0.95)',
+    fontSize: 11.5,
+    letterSpacing: 0.4,
   },
   hint: {
     fontFamily: FONT.regular,
