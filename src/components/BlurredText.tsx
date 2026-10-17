@@ -39,6 +39,11 @@ const BUBBLE_BLUR = 5;
 const FADE = 12;
 /** Запас по краям для дрейфа шариков, чтобы панель не «худела». */
 const OVERSCAN = 14;
+/**
+ * Запас по вертикали для холста текста: без него размытие обрезается краем
+ * холста, и у мягких краёв панели появляется резкая граница.
+ */
+const OVERHANG = 24;
 
 interface BlurredTextProps {
   children: string;
@@ -112,11 +117,27 @@ export function BlurredText({
 
   // Обрезаем длинный адрес, чтобы он не вылезал за пределы панели.
   const perChar = size * 0.58;
-  const maxChars = width > 0 ? Math.max(6, Math.floor((width - 16) / perChar)) : 32;
+  const maxChars = width > 0 ? Math.max(6, Math.floor((width - 24) / perChar)) : 32;
   const shown = text.length > maxChars ? `…${text.slice(-(maxChars - 1))}` : text;
 
   // Смещение по Y: центр строки внутри панели (baseline шрифта).
   const baseline = height / 2 + size * 0.36;
+
+  /**
+   * Положение текста по горизонтали. Адрес центрируется по панели: раньше он
+   * рисовался от левого края, из-за чего размытое пятно было слева, и замок,
+   * стоящий ровно по центру, казался смещённым вправо.
+   */
+  const textWidth = useMemo(() => {
+    if (!font) return 0;
+    try {
+      return font.measureText(shown).width;
+    } catch {
+      return 0;
+    }
+  }, [font, shown]);
+
+  const textX = width > 0 ? Math.max(0, (width - textWidth) / 2) : 0;
 
   const translateX = drift.interpolate({ inputRange: [0, 1], outputRange: [-6, 6] });
   const translateY = drift.interpolate({ inputRange: [0, 1], outputRange: [3, -3] });
@@ -169,29 +190,31 @@ export function BlurredText({
             </Animated.View>
           </View>
 
-          {/* Слой текста и мягких краёв. */}
-          <View style={StyleSheet.absoluteFill} pointerEvents="none">
-            <Canvas style={{ width, height }}>
+          {/* Слой текста. Холст выходит за пределы панели по вертикали: иначе
+              размытие обрезается его краем и у мягких краёв появляется резкая
+              граница — она и портила низ панели. */}
+          <View style={styles.textLayer} pointerEvents="none">
+            <Canvas style={{ width, height: height + OVERHANG * 2 }}>
               {/* Сам адрес: два прохода размытия, иначе буквы угадываются. */}
-              <SkText x={8} y={baseline} text={shown} font={font} color={color} opacity={0.8}>
+              <SkText x={textX} y={baseline + OVERHANG} text={shown} font={font} color={color} opacity={0.8}>
                 <Blur blur={BLUR_SIGMA} />
               </SkText>
-              <SkText x={8} y={baseline} text={shown} font={font} color={color} opacity={0.55}>
+              <SkText x={textX} y={baseline + OVERHANG} text={shown} font={font} color={color} opacity={0.55}>
                 <Blur blur={BLUR_SIGMA * 1.6} />
               </SkText>
 
               {/* Мягкие края: градиенты в тон карточки поверх содержимого,
                   поэтому панель растворяется со всех четырёх сторон. */}
-              <Rect x={0} y={0} width={width} height={FADE}>
+              <Rect x={0} y={OVERHANG} width={width} height={FADE}>
                 <LinearGradient start={vec(0, 0)} end={vec(0, FADE)} colors={[solid, clear]} />
               </Rect>
-              <Rect x={0} y={height - FADE} width={width} height={FADE}>
+              <Rect x={0} y={OVERHANG + height - FADE} width={width} height={FADE}>
                 <LinearGradient start={vec(0, 0)} end={vec(0, FADE)} colors={[clear, solid]} />
               </Rect>
-              <Rect x={0} y={0} width={FADE} height={height}>
+              <Rect x={0} y={OVERHANG} width={FADE} height={height}>
                 <LinearGradient start={vec(0, 0)} end={vec(FADE, 0)} colors={[solid, clear]} />
               </Rect>
-              <Rect x={width - FADE} y={0} width={FADE} height={height}>
+              <Rect x={width - FADE} y={OVERHANG} width={FADE} height={height}>
                 <LinearGradient start={vec(0, 0)} end={vec(FADE, 0)} colors={[clear, solid]} />
               </Rect>
             </Canvas>
@@ -209,5 +232,12 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     bottom: 0,
+  },
+  /** Холст текста выходит за панель на OVERHANG, чтобы размытие не резалось. */
+  textLayer: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    top: -OVERHANG,
   },
 });
