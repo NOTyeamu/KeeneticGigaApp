@@ -311,14 +311,12 @@ export function SettingsScreen() {
               <ListButton
                 title={item.title}
                 icon={item.icon}
-                subtitle={hasUpdate ? `Доступна версия ${updateVersion}` : undefined}
                 first={i === 0}
                 last={i === MANAGEMENT_ITEMS.length - 1}
                 right={
                   hasUpdate ? (
-                    <View style={[styles.updateBadge, { backgroundColor: colors.accent }]}>
-                      <Ionicons name="arrow-up" size={11} color="#FFFFFF" />
-                      <Text style={styles.updateBadgeText}>Есть обновление</Text>
+                    <View style={[styles.updateDot, { backgroundColor: colors.accent }]}>
+                      <Ionicons name="cloud-download" size={13} color="#FFFFFF" />
                     </View>
                   ) : undefined
                 }
@@ -415,18 +413,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  updateBadge: {
-    flexDirection: 'row',
+  updateDot: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     alignItems: 'center',
-    gap: 4,
-    borderRadius: Radius.pill,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-  },
-  updateBadgeText: {
-    fontFamily: FONT.semiBold,
-    fontSize: 10,
-    color: '#FFFFFF',
-    letterSpacing: 0.3,
+    justifyContent: 'center',
   },
 });

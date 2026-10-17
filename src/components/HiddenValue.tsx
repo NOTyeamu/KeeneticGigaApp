@@ -100,15 +100,15 @@ export function HiddenValue({ value, hint, onChangePress }: HiddenValueProps) {
           pointerEvents="none"
           style={[styles.blurLayer, { opacity: blurOpacity, transform: [{ scaleX: blurScale }] }]}
         >
-          <BlurredText color={colors.text} size={14} height={34}>
+          <BlurredText color={colors.text} accent={colors.accent} size={14} height={34}>
             {value}
           </BlurredText>
           {/* Лёгкая вуаль в тон карточки: сквозь неё видно размытое пятно,
               но прочитать адрес нельзя. */}
           <View style={[StyleSheet.absoluteFill, { backgroundColor: colors.card, opacity: 0.28 }]} />
-          <View style={styles.badge}>
-            <Ionicons name="eye-off-outline" size={12} color={colors.textSecondary} />
-            <Text style={[styles.badgeText, { color: colors.textSecondary }]}>Размыто</Text>
+          {/* Замочек по центру панели: подсказывает, что значение скрыто. */}
+          <View style={styles.centerIcon} pointerEvents="none">
+            <Ionicons name="lock-closed" size={15} color={colors.text} style={{ opacity: 0.75 }} />
           </View>
         </Animated.View>
       </Pressable>
@@ -159,19 +159,14 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
     justifyContent: 'center',
   },
-  badge: {
+  centerIcon: {
     position: 'absolute',
-    right: 8,
     top: 0,
+    left: 0,
+    right: 0,
     bottom: 0,
-    flexDirection: 'row',
     alignItems: 'center',
-    gap: 4,
-  },
-  badgeText: {
-    fontFamily: FONT.medium,
-    fontSize: 11,
-    letterSpacing: 0.3,
+    justifyContent: 'center',
   },
   bottomRow: {
     flexDirection: 'row',

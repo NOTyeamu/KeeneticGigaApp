@@ -1,15 +1,12 @@
 import { useEffect, useRef } from 'react';
 import { Animated, Easing, StyleSheet, Text, View } from 'react-native';
-import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useSettings } from '../context/SettingsContext';
 import { FONT, Radius, Spacing } from '../theme/colors';
 
 /**
- * Индикатор загрузки обновления в стиле приложения: круг с иконкой и
- * процентом, мягкая подсветка под ним и полоса загрузки с бегущим блеском.
- *
- * Пока точный размер неизвестен, вместо процента показывается вращение —
+ * Компактный индикатор загрузки: круг с процентом, мягкая подсветка и полоса
+ * загрузки с бегущим блеском. Пока размер файла неизвестен, круг вращается —
  * так видно, что загрузка идёт, а не зависла.
  */
 export function UpdateProgress({
@@ -68,49 +65,46 @@ export function UpdateProgress({
   const rotation = spin.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
   const glowScale = pulse.interpolate({ inputRange: [0, 1], outputRange: [1, 1.08] });
   const glowOpacity = pulse.interpolate({ inputRange: [0, 1], outputRange: [0.16, 0.3] });
-  const shineX = shimmer.interpolate({ inputRange: [0, 1], outputRange: [-90, 240] });
+  const shineX = shimmer.interpolate({ inputRange: [0, 1], outputRange: [-90, 260] });
 
   const writtenMb = (written / (1024 * 1024)).toFixed(1).replace('.', ',');
   const totalMb = total > 0 ? (total / (1024 * 1024)).toFixed(1).replace('.', ',') : null;
 
   return (
-    <View style={[styles.wrap, { backgroundColor: colors.card, borderColor: colors.border }]}>
-      <View style={styles.ringWrap}>
-        <Animated.View
-          style={[styles.glow, { backgroundColor: colors.accent, opacity: glowOpacity, transform: [{ scale: glowScale }] }]}
-        />
-        <View style={[styles.ring, { borderColor: colors.divider }]} />
-        {!known ? (
+    <View style={[styles.wrap, { backgroundColor: colors.cardAlt, borderColor: colors.border }]}>
+      <View style={styles.head}>
+        <View style={styles.ringWrap}>
           <Animated.View
-            style={[
-              styles.ring,
-              { borderColor: 'transparent', borderTopColor: colors.accent, transform: [{ rotate: rotation }] },
-            ]}
+            style={[styles.glow, { backgroundColor: colors.accent, opacity: glowOpacity, transform: [{ scale: glowScale }] }]}
           />
-        ) : (
-          <View style={[styles.ring, { borderColor: colors.accent }]} />
-        )}
-        <View style={styles.ringInner}>
-          <Ionicons name="cloud-download-outline" size={20} color={colors.accent} />
-          <Text style={{ fontFamily: FONT.bold, fontSize: 15, color: colors.text, marginTop: 1 }}>
+          <View style={[styles.ring, { borderColor: colors.divider }]} />
+          {!known ? (
+            <Animated.View
+              style={[
+                styles.ring,
+                { borderColor: 'transparent', borderTopColor: colors.accent, transform: [{ rotate: rotation }] },
+              ]}
+            />
+          ) : (
+            <View style={[styles.ring, { borderColor: colors.accent }]} />
+          )}
+          <Text style={{ fontFamily: FONT.bold, fontSize: 14, color: colors.text }}>
             {pct != null ? `${pct}%` : '…'}
+          </Text>
+        </View>
+
+        <View style={{ flex: 1, marginLeft: Spacing.sm }}>
+          <Text style={{ fontFamily: FONT.medium, fontSize: 13, color: colors.text }} numberOfLines={1}>
+            {label}
+          </Text>
+          <Text style={{ fontFamily: FONT.regular, fontSize: 11, color: colors.textMuted, marginTop: 2 }}>
+            {totalMb ? `${writtenMb} из ${totalMb} МБ` : `Скачано ${writtenMb} МБ`}
           </Text>
         </View>
       </View>
 
-      <Text style={{ fontFamily: FONT.medium, fontSize: 13, color: colors.text, marginTop: Spacing.sm }}>{label}</Text>
-      <Text style={{ fontFamily: FONT.regular, fontSize: 11, color: colors.textMuted, marginTop: 2 }}>
-        {totalMb ? `${writtenMb} из ${totalMb} МБ` : `Скачано ${writtenMb} МБ`}
-      </Text>
-
-      {/* Полоса загрузки с блеском. */}
       <View style={[styles.barTrack, { backgroundColor: colors.divider }]}>
-        <View
-          style={[
-            styles.barFillWrap,
-            { width: known ? `${Math.max(2, pct ?? 0)}%` : '35%' },
-          ]}
-        >
+        <View style={[styles.barFill, { width: known ? `${Math.max(3, pct ?? 0)}%` : '35%' }]}>
           <LinearGradient
             colors={[colors.accentDim, colors.accent]}
             start={{ x: 0, y: 0 }}
@@ -131,14 +125,16 @@ export function UpdateProgress({
   );
 }
 
-const RING = 84;
+const RING = 46;
 
 const styles = StyleSheet.create({
   wrap: {
     borderRadius: Radius.md,
     borderWidth: StyleSheet.hairlineWidth,
-    paddingVertical: Spacing.md,
-    paddingHorizontal: Spacing.md,
+    padding: Spacing.sm,
+  },
+  head: {
+    flexDirection: 'row',
     alignItems: 'center',
   },
   ringWrap: {
@@ -149,8 +145,8 @@ const styles = StyleSheet.create({
   },
   glow: {
     position: 'absolute',
-    width: RING * 0.8,
-    height: RING * 0.8,
+    width: RING * 0.78,
+    height: RING * 0.78,
     borderRadius: RING,
   },
   ring: {
@@ -158,20 +154,16 @@ const styles = StyleSheet.create({
     width: RING,
     height: RING,
     borderRadius: RING,
-    borderWidth: 4,
-  },
-  ringInner: {
-    alignItems: 'center',
-    justifyContent: 'center',
+    borderWidth: 3,
   },
   barTrack: {
     width: '100%',
-    height: 6,
+    height: 5,
     borderRadius: Radius.pill,
     marginTop: Spacing.sm,
     overflow: 'hidden',
   },
-  barFillWrap: {
+  barFill: {
     height: '100%',
     borderRadius: Radius.pill,
     overflow: 'hidden',
