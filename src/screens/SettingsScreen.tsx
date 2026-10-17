@@ -155,18 +155,19 @@ export function SettingsScreen() {
               ) : null}
             </View>
 
-            {/* Под размытием — только публичная ссылка на роутер. */}
-            {remoteAddress ? (
+            {/* Под размытием — публичная ссылка на роутер. */}
+            {remoteAddress && !editingRemote ? (
               <HiddenValue
                 value={remoteAddress}
                 hint="Нажмите, чтобы показать · удерживайте, чтобы скопировать"
+                onChangePress={() => {
+                  setRemoteDraft(remoteAddress);
+                  setEditingRemote(true);
+                  setRemoteError(null);
+                }}
               />
             ) : (
               <>
-                <Text style={{ fontFamily: FONT.regular, fontSize: 12.5, color: colors.textSecondary, marginBottom: 8 }}>
-                  Внешняя ссылка не задана. Без неё приложение подключается только к домашней сети — добавьте её,
-                  чтобы управлять роутером из любой сети.
-                </Text>
                 <View
                   style={[
                     styles.inlineField,
@@ -181,6 +182,7 @@ export function SettingsScreen() {
                     autoCapitalize="none"
                     autoCorrect={false}
                     keyboardType="url"
+                    autoFocus={!!remoteAddress}
                     style={{ flex: 1, fontFamily: FONT.regular, fontSize: 14, color: colors.text, paddingHorizontal: 10 }}
                   />
                   <Pressable
@@ -198,6 +200,49 @@ export function SettingsScreen() {
                     <Ionicons name="checkmark" size={16} color="#FFFFFF" />
                   </Pressable>
                 </View>
+
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 6 }}>
+                  {!remoteAddress ? (
+                    <Text style={{ flex: 1, fontFamily: FONT.regular, fontSize: 11.5, color: colors.textSecondary }}>
+                      Без ссылки приложение подключается только к домашней сети.
+                    </Text>
+                  ) : (
+                    <View style={{ flex: 1 }} />
+                  )}
+                  <Pressable
+                    onPress={() => {
+                      haptic();
+                      setEditingRemote(false);
+                      setRemoteDraft('');
+                      setRemoteError(null);
+                    }}
+                    hitSlop={8}
+                  >
+                    <Text style={{ fontFamily: FONT.semiBold, fontSize: 12, color: colors.textSecondary, marginLeft: 10 }}>
+                      Отмена
+                    </Text>
+                  </Pressable>
+                  {remoteAddress ? (
+                    <Pressable
+                      onPress={() => {
+                        haptic();
+                        setRemoteUrl(null).then(() => {
+                          setRemoteAddress(getRemoteUrl());
+                          setEditingRemote(false);
+                          setRemoteDraft('');
+                          setUrl(getBaseUrl());
+                          setRoute(getRouteInfo());
+                        });
+                      }}
+                      hitSlop={8}
+                    >
+                      <Text style={{ fontFamily: FONT.semiBold, fontSize: 12, color: colors.danger, marginLeft: 12 }}>
+                        Удалить
+                      </Text>
+                    </Pressable>
+                  ) : null}
+                </View>
+
                 {remoteError ? (
                   <Text style={{ fontFamily: FONT.regular, fontSize: 11.5, color: colors.danger, marginTop: 6 }}>
                     {remoteError}
@@ -205,36 +250,6 @@ export function SettingsScreen() {
                 ) : null}
               </>
             )}
-
-            {/* Запасной путь: добавить ссылку, когда адрес уже показывается. */}
-            {remoteAddress && editingRemote ? (
-              <View
-                style={[
-                  styles.inlineField,
-                  { backgroundColor: colors.inputBg, borderColor: colors.border, marginTop: 10 },
-                ]}
-              >
-                <TextInput
-                  value={remoteDraft}
-                  onChangeText={setRemoteDraft}
-                  placeholder="https://имя.keenetic.link/rci/"
-                  placeholderTextColor={colors.textMuted}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  keyboardType="url"
-                  autoFocus
-                  style={{ flex: 1, fontFamily: FONT.regular, fontSize: 14, color: colors.text, paddingHorizontal: 10 }}
-                />
-                <Pressable
-                  onPress={saveRemote}
-                  disabled={savingRemote}
-                  android_ripple={{ color: colors.accentSoft }}
-                  style={[styles.inlineSave, { backgroundColor: colors.accent, opacity: savingRemote ? 0.6 : 1 }]}
-                >
-                  <Ionicons name="checkmark" size={16} color="#FFFFFF" />
-                </Pressable>
-              </View>
-            ) : null}
 
             {route.reason === 'unreachable' ? (
               <Text style={{ fontFamily: FONT.regular, fontSize: 11.5, color: colors.danger, marginTop: 6 }}>
