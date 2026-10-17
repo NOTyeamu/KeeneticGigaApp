@@ -100,7 +100,13 @@ export function HiddenValue({ value, hint, onChangePress }: HiddenValueProps) {
           pointerEvents="none"
           style={[styles.blurLayer, { opacity: blurOpacity, transform: [{ scaleX: blurScale }] }]}
         >
-          <BlurredText color={colors.text} accent={colors.accent} size={14} height={34}>
+          <BlurredText
+            color={colors.text}
+            cardColor={colors.card}
+            accent={colors.accent}
+            size={14}
+            height={34}
+          >
             {value}
           </BlurredText>
           {/* Лёгкая вуаль в тон карточки: сквозь неё видно размытое пятно,
