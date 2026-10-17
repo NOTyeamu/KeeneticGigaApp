@@ -160,7 +160,15 @@ jobs:
           if [ -n "$KEYSTORE_B64" ]; then
             echo "Keystore: постоянный (из секрета)"
             STORE_PASS="${KEYSTORE_PASSWORD:-keeneticgiga}"
-            printf '%s' "$KEYSTORE_B64" | tr -d '\r\n' | base64 -d > release.jks
+            # tr убирает ВСЕ пробельные символы, включая перевод строки,
+            # который секрет получает при сохранении, — иначе base64 ругается
+            # на «invalid input».
+            printf '%s' "$KEYSTORE_B64" | tr -d '\r\n\t ' | base64 -d > release.jks
+            if [ ! -s release.jks ]; then
+              echo "Не удалось разобрать keystore из секрета ANDROID_KEYSTORE_B64"
+              exit 1
+            fi
+            echo "keystore: $(stat -c%s release.jks) байт"
             # Алиас берём из секрета, иначе определяем по самому keystore:
             # у чужого ключа он наверняка отличается от нашего.
             ALIAS="${KEY_ALIAS:-}"
