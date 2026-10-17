@@ -100,9 +100,14 @@ export function HiddenValue({ value, hint, onChangePress }: HiddenValueProps) {
           {/* Панель без адреса внутри: пока значение скрыто, рисовать нечего,
               поэтому подглядывать нечего. */}
           <BlurPanel cardColor={colors.card} accent={colors.accent} height={PANEL_H} />
-          {/* Замочек по центру панели: подсказывает, что значение скрыто. */}
+          {/* Значок по центру панели: подсказывает, что значение скрыто. */}
           <View style={styles.centerIcon} pointerEvents="none">
-            <Ionicons name="lock-closed" size={15} color={colors.text} style={{ opacity: 0.75 }} />
+            <Ionicons
+              name="eye-off-outline"
+              size={17}
+              color={colors.text}
+              style={styles.centerIconGlyph}
+            />
           </View>
         </Animated.View>
       </Pressable>
@@ -165,6 +170,14 @@ const styles = StyleSheet.create({
     bottom: 0,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  /**
+   * Иконки из шрифта на Android несут лишний вертикальный отступ
+   * (includeFontPadding), из-за чего внутри центрирующей рамки значок встаёт
+   * ниже центра. Отключаем этот отступ — значок встаёт по центру.
+   */
+  centerIconGlyph: {
+    includeFontPadding: false,
   },
   bottomRow: {
     flexDirection: 'row',

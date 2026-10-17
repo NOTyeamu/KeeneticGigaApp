@@ -44,7 +44,7 @@ function noise(seed: number): number {
  * Шарики: положение в долях панели, радиус и прозрачность. Считаются один раз
  * при загрузке модуля — на отрисовку это не влияет.
  */
-const BUBBLES = Array.from({ length: 20 }, (_, i) => {
+const BUBBLES = Array.from({ length: 34 }, (_, i) => {
   const r1 = noise(i + 1);
   const r2 = noise((i + 1) * 1.7 + 11);
   const r3 = noise((i + 1) * 2.3 + 29);
@@ -52,8 +52,8 @@ const BUBBLES = Array.from({ length: 20 }, (_, i) => {
   return {
     x: r1,
     y: r2,
-    r: 3.5 + r3 * 6.5,
-    o: 0.28 + r4 * 0.34,
+    r: 2.5 + r3 * 5.5,
+    o: 0.26 + r4 * 0.34,
   };
 });
 
@@ -68,13 +68,13 @@ export function BlurPanel({ cardColor, accent, height, style }: BlurPanelProps) 
       Animated.sequence([
         Animated.timing(drift, {
           toValue: 1,
-          duration: 12000,
+          duration: 6000,
           easing: Easing.inOut(Easing.sin),
           useNativeDriver: true,
         }),
         Animated.timing(drift, {
           toValue: 0,
-          duration: 12000,
+          duration: 6000,
           easing: Easing.inOut(Easing.sin),
           useNativeDriver: true,
         }),
