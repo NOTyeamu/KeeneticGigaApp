@@ -2,37 +2,29 @@ import { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LoadingState, ErrorState, EmptyState } from '../../components/States';
-import { PageCard } from '../../components/PageParts';
+import { MonitorCard, PortsGrid, type PortInfo } from '../../components/MonitorWidgets';
 import { ObjectView } from '../../components/ObjectView';
-import {
-  ActionButton,
-  CheckboxRow,
-  FormSectionTitle,
-  LabeledInput,
-  SelectField,
-} from '../../components/FormParts';
+import { ActionButton, CheckboxRow, LabeledInput, SelectField } from '../../components/FormParts';
 import { useAlert, useAlertDialog } from '../../components/AlertDialog';
 import { useApi } from '../../hooks/useApi';
 import { useCreds } from '../../hooks/useCreds';
 import { Api, toArray } from '../../lib/api';
-import { asInterfaces, hasRole, ifaceId, ifaceName, isUp, type Iface } from '../../lib/interfaces';
+import { asInterfaces, hasRole, ifaceId, isUp } from '../../lib/interfaces';
 import { useSettings } from '../../context/SettingsContext';
 import { FONT, Radius, Spacing } from '../../theme/colors';
 
 /**
- * «Кабель Ethernet» — страница проводных интернет-подключений, повторяющая
- * веб-интерфейс KeeneticOS: список подключений, расписание, приоритет, имя
- * провайдера, порты и VLAN'ы, параметры IPv4/IPv6, требования провайдера,
- * аутентификация PPPoE/PPTP/L2TP, 802.1x и Ping Check.
+ * «Кабель Ethernet» — проводные интернет-подключения, как в веб-интерфейсе
+ * KeeneticOS: список подключений, расписание и приоритет, имя провайдера,
+ * порты и VLAN'ы, параметры IPv4/IPv6, требования провайдера, аутентификация
+ * PPPoE/PPTP/L2TP, 802.1x и Ping Check.
  *
- * Данные берутся из двух источников сразу:
- *  - `show/interface` — интерфейсы с ролью `inet` (проверенный источник, по нему
- *    же работал прежний список подключений);
- *  - `show/ip/interface` — параметры IP-стека подключений.
+ * Данные берутся из двух источников сразу (`show/interface` и
+ * `show/ip/interface`): если один на этой прошивке пуст, страница всё равно
+ * покажет подключения из второго. Сырые ответы видны внизу.
  *
- * Источники объединяются: если один из них на этой прошивке отдаёт другое или
- * пустое, страница всё равно покажет подключения из второго, а сырые ответы
- * всегда видны в самом низу — чтобы не приходилось гадать, что вернул роутер.
+ * Порты рисуются тем же компонентом, что и в «Системном мониторе», — с
+ * картинками портов роутера, а не с условными значками.
  */
 
 const SCHEDULES = [
@@ -90,8 +82,6 @@ interface EthConn {
   gateway?: string;
   mac?: string;
   mtu?: number;
-  dhcp?: boolean;
-  /** Из какого запроса пришли данные — показывается в деталях. */
   source: string;
 }
 
@@ -103,7 +93,7 @@ async function settle<T>(p: Promise<T>): Promise<T | null> {
   }
 }
 
-/** «1.2.3.4/24» -> адрес и маска по отдельности. */
+/** «1.2.3.4/24» → адрес и маска по отдельности. */
 function splitAddress(value: unknown): { address?: string; mask?: string } {
   if (typeof value !== 'string' || !value) return {};
   const [address, mask] = value.split('/');
@@ -116,15 +106,13 @@ export default function Ethernet() {
   const alert = useAlert();
   const { confirm } = useAlertDialog();
 
-  // Оба запроса идут параллельно и не роняют страницу поодиночке: если один
-  // не поддержан прошивкой, данные берутся из второго.
+  // Оба запроса идут параллельно и не роняют страницу поодиночке.
   const req = useApi('eth-conns', async () => {
-    const [ifaces, ipIface, system] = await Promise.all([
+    const [ifaces, ipIface] = await Promise.all([
       settle(Api.interface(creds)),
       settle(Api.internetConnections(creds)),
-      settle(Api.system(creds)),
     ]);
-    return { ifaces, ipIface, system };
+    return { ifaces, ipIface };
   });
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -133,24 +121,23 @@ export default function Ethernet() {
   const [showRaw, setShowRaw] = useState(false);
   const [overrides, setOverrides] = useState<Record<string, Partial<EthConn>>>({});
 
-  const connections = useMemo<EthConn[]>(() => {
-    const data = req.data as { ifaces: unknown; ipIface: unknown; system: unknown } | null;
-    if (!data) return [];
+  const raw = req.data as { ifaces: unknown; ipIface: unknown } | null;
 
+  const connections = useMemo<EthConn[]>(() => {
+    if (!raw) return [];
     const byId = new Map<string, EthConn>();
 
     // --- Источник 1: show/interface, интерфейсы с ролью inet ---
-    for (const i of asInterfaces(data.ifaces)) {
+    for (const i of asInterfaces(raw.ifaces)) {
       const inet = hasRole(i, 'inet') || i.global === true;
       if (!inet) continue;
       const id = ifaceId(i);
       if (!id || id === '—') continue;
-      const up = isUp(i);
       byId.set(id, {
         id,
         description: String(i.description || i.name || i['interface-name'] || id),
         type: i.type ? String(i.type) : undefined,
-        up,
+        up: isUp(i),
         enabled: String(i.state ?? '').toLowerCase() !== 'down',
         mac: i.mac || i.hwaddr ? String(i.mac || i.hwaddr) : undefined,
         mtu: i.mtu != null ? Number(i.mtu) : undefined,
@@ -160,13 +147,12 @@ export default function Ethernet() {
     }
 
     // --- Источник 2: show/ip/interface ---
-    for (const c of toArray(data.ipIface)) {
+    for (const c of toArray(raw.ipIface)) {
       const id = String(c?.id ?? c?.interface ?? c?.['interface-name'] ?? c?._key ?? '');
       if (!id || id === 'undefined') continue;
       const existing = byId.get(id);
       const parsed = splitAddress(c?.address);
       if (existing) {
-        // Данные второго источника точнее по IP — дополняем, не перетирая.
         byId.set(id, {
           ...existing,
           address: parsed.address ?? existing.address,
@@ -193,35 +179,26 @@ export default function Ethernet() {
     }
 
     return [...byId.values()];
-  }, [req.data]);
+  }, [raw]);
+
+  // Порты роутера — тот же источник, что в «Системном мониторе».
+  const ports = useMemo<PortInfo[]>(() => {
+    return asInterfaces(raw?.ifaces)
+      .filter((i) => String(i.type ?? '') === 'Port')
+      .map((p, idx) => ({
+        key: String(p.id ?? idx),
+        label: String(p.description ?? String(p['interface-name'] ?? p.id ?? idx).split('/').pop() ?? idx),
+        up: String(p.link ?? '') === 'up',
+        speed: p.speed != null ? Number(p.speed) : null,
+        duplex: p.duplex != null ? String(p.duplex) : null,
+      }));
+  }, [raw]);
 
   const list = connections.map((c) => (overrides[c.id] ? { ...c, ...overrides[c.id] } : c));
   const selected = list.find((c) => c.id === selectedId) ?? list[0] ?? null;
 
   if (req.loading) return <LoadingState />;
   if (req.error) return <ErrorState message={req.error} onRetry={req.refetch} />;
-
-  const raw = req.data as { ifaces: unknown; ipIface: unknown; system: unknown } | null;
-
-  // Пусто только если роутер действительно ничего не отдал — тогда честно
-  // показываем ответ как есть, а не сообщение «не найдено» без объяснений.
-  if (list.length === 0) {
-    return (
-      <View style={{ gap: Spacing.md }}>
-        <EmptyState
-          icon="cloud-offline-outline"
-          title="Подключения не найдены"
-          subtitle="Роутер не вернул ни одного интернет-подключения. Ниже — ответ роутера как есть."
-        />
-        <PageCard title="Ответ роутера">
-          <ObjectView data={raw?.ipIface ?? null} maxDepth={4} />
-        </PageCard>
-        <PageCard title="Интерфейсы">
-          <ObjectView data={raw?.ifaces ?? null} maxDepth={3} />
-        </PageCard>
-      </View>
-    );
-  }
 
   const apply = (patch: Partial<EthConn>) => {
     if (!selected) return;
@@ -242,7 +219,11 @@ export default function Ethernet() {
           await req.refetch();
         } catch (e: any) {
           apply({ enabled: before });
-          alert.show({ title: 'Не удалось применить', message: e?.message ?? 'Роутер отклонил команду.', actions: [{ text: 'OK' }] });
+          alert.show({
+            title: 'Не удалось применить',
+            message: e?.message ?? 'Роутер отклонил команду.',
+            actions: [{ text: 'OK' }],
+          });
         } finally {
           setBusy(false);
         }
@@ -259,7 +240,11 @@ export default function Ethernet() {
       await req.refetch();
       alert.show({ title: 'Имя сохранено', message: 'Новое имя применено на роутере.', actions: [{ text: 'OK' }] });
     } catch (e: any) {
-      alert.show({ title: 'Не удалось сохранить имя', message: e?.message ?? 'Роутер отклонил команду.', actions: [{ text: 'OK' }] });
+      alert.show({
+        title: 'Не удалось сохранить имя',
+        message: e?.message ?? 'Роутер отклонил команду.',
+        actions: [{ text: 'OK' }],
+      });
     } finally {
       setBusy(false);
     }
@@ -277,7 +262,11 @@ export default function Ethernet() {
           setSelectedId(null);
           await req.refetch();
         } catch (e: any) {
-          alert.show({ title: 'Не удалось удалить', message: e?.message ?? 'Роутер отклонил команду.', actions: [{ text: 'OK' }] });
+          alert.show({
+            title: 'Не удалось удалить',
+            message: e?.message ?? 'Роутер отклонил команду.',
+            actions: [{ text: 'OK' }],
+          });
         } finally {
           setBusy(false);
         }
@@ -296,107 +285,148 @@ export default function Ethernet() {
     });
   };
 
-  return (
-    <View style={{ gap: Spacing.sm }}>
-      <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6 }}>
-        <Text style={{ flex: 1, fontFamily: FONT.bold, fontSize: 20, color: colors.text }}>
-          Подключения к интернету по Ethernet-кабелю
-        </Text>
-        <Ionicons name="help-circle-outline" size={17} color={colors.textMuted} style={{ marginTop: 4 }} />
-      </View>
-      <Text style={{ fontFamily: FONT.regular, fontSize: 12.5, lineHeight: 18, color: colors.textSecondary }}>
-        Настройте доступ в Интернет и дополнительные услуги в соответствии с требованиями провайдера. С легкостью
-        подключайтесь к нескольким провайдерам одновременно для обеспечения отказоустойчивости и балансировки нагрузки.
-      </Text>
+  const showHelp = () => {
+    haptic();
+    alert.show({
+      title: 'Кабель Ethernet',
+      message:
+        'Здесь настраиваются проводные подключения к интернету: выбор провайдера, расписание и приоритет, ' +
+        'параметры IPv4 и IPv6, требования провайдера (MAC-адрес, MTU), а также аутентификация PPPoE/PPTP/L2TP ' +
+        'и проверка доступности интернета.\n\n' +
+        'Верхний переключатель включает и выключает выбранное подключение. Имя провайдера можно изменить — ' +
+        'оно сохраняется на роутере.\n\n' +
+        'Часть полей доступна только в веб-интерфейсе роутера.',
+      actions: [{ text: 'Понятно' }],
+    });
+  };
 
-      {/* ── Список подключений ── */}
-      <View style={{ flexDirection: 'row', alignItems: 'flex-end', marginTop: Spacing.xs, flexWrap: 'wrap' }}>
-        {list.map((c) => {
-          const active = selected?.id === c.id;
-          return (
-            <Pressable
-              key={c.id}
-              onPress={() => {
-                haptic();
-                setSelectedId(c.id);
-              }}
-              style={{
-                paddingHorizontal: 12,
-                paddingVertical: 8,
-                marginRight: 6,
-                borderBottomWidth: 2,
-                borderBottomColor: active ? colors.accent : 'transparent',
-              }}
-            >
-              <Text
-                style={{
-                  fontFamily: active ? FONT.semiBold : FONT.regular,
-                  fontSize: 14,
-                  color: active ? colors.accent : colors.textSecondary,
-                }}
-                numberOfLines={1}
-              >
-                {c.description}
-              </Text>
-            </Pressable>
-          );
-        })}
+  return (
+    <View style={{ gap: Spacing.md }}>
+      {/* ── Заголовок с подсказкой по кнопке ── */}
+      <View style={styles.headerRow}>
+        <Text style={{ flex: 1, fontFamily: FONT.bold, fontSize: 20, color: colors.text }}>
+          Подключения по Ethernet-кабелю
+        </Text>
+        <Pressable onPress={showHelp} hitSlop={10} style={styles.helpBtn}>
+          <Ionicons name="help-circle-outline" size={22} color={colors.accent} />
+        </Pressable>
       </View>
-      <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: colors.divider }} />
+
+      {/* ── Выбор подключения ── */}
+      <MonitorCard title="Подключения">
+        {list.length === 0 ? (
+          <Text style={{ fontFamily: FONT.regular, fontSize: 13, color: colors.textSecondary }}>
+            Роутер не вернул ни одного интернет-подключения. Ответ роутера — в разделе ниже.
+          </Text>
+        ) : (
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+            {list.map((c) => {
+              const active = selected?.id === c.id;
+              return (
+                <Pressable
+                  key={c.id}
+                  onPress={() => {
+                    haptic();
+                    setSelectedId(c.id);
+                  }}
+                  style={[
+                    styles.tab,
+                    {
+                      backgroundColor: active ? colors.accent : colors.cardAlt,
+                      borderColor: active ? colors.accent : colors.border,
+                    },
+                  ]}
+                >
+                  <Text
+                    style={{
+                      fontFamily: active ? FONT.semiBold : FONT.regular,
+                      fontSize: 13,
+                      color: active ? '#FFFFFF' : colors.textSecondary,
+                    }}
+                    numberOfLines={1}
+                  >
+                    {c.description}
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
+        )}
+      </MonitorCard>
 
       {selected ? (
         <>
-          <FormSectionTitle>Ethernet-подключение</FormSectionTitle>
-          <View style={styles.inlineRow}>
-            <Switch
-              value={selected.enabled}
-              disabled={busy}
-              onValueChange={runToggle}
-              trackColor={{ false: colors.divider, true: colors.accentDim }}
-              thumbColor={selected.enabled ? colors.accent : colors.textMuted}
-            />
-            <View style={[styles.pill, { backgroundColor: (selected.up ? colors.online : colors.offline) + '22', marginLeft: 10 }]}>
-              <View
-                style={{
-                  width: 6,
-                  height: 6,
-                  borderRadius: 3,
-                  backgroundColor: selected.up ? colors.online : colors.offline,
-                }}
+          {/* ── Состояние и имя ── */}
+          <MonitorCard
+            title="Ethernet-подключение"
+            right={
+              <Switch
+                value={selected.enabled}
+                disabled={busy}
+                onValueChange={runToggle}
+                trackColor={{ false: colors.divider, true: colors.accentDim }}
+                thumbColor={selected.enabled ? colors.accent : colors.textMuted}
               />
-              <Text style={[styles.pillText, { color: selected.up ? colors.online : colors.offline }]}>
-                {selected.up ? 'Подключено' : selected.enabled ? 'Не подключено' : 'Отключено'}
-              </Text>
+            }
+          >
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: Spacing.sm }}>
+              <View
+                style={[styles.pill, { backgroundColor: (selected.up ? colors.online : colors.offline) + '22' }]}
+              >
+                <View
+                  style={{
+                    width: 6,
+                    height: 6,
+                    borderRadius: 3,
+                    backgroundColor: selected.up ? colors.online : colors.offline,
+                  }}
+                />
+                <Text style={[styles.pillText, { color: selected.up ? colors.online : colors.offline }]}>
+                  {selected.up ? 'Подключено' : selected.enabled ? 'Не подключено' : 'Отключено'}
+                </Text>
+              </View>
             </View>
-          </View>
 
-          <SelectField
-            label="Расписание работы"
-            value={optionLabel(SCHEDULES, 'always')}
-            onPress={() => pickFrom('Расписание работы', SCHEDULES, () => {})}
-          />
-          <SelectField
-            label="Приоритет подключения"
-            value={optionLabel(PRIORITIES, 'default')}
-            onPress={() => pickFrom('Приоритет подключения', PRIORITIES, () => {})}
-          />
+            <LabeledInput
+              label="Имя провайдера"
+              value={selected.description}
+              onChangeText={(v) => apply({ description: v })}
+              autoCapitalize="sentences"
+            />
+            <View style={{ flexDirection: 'row', gap: Spacing.sm, marginTop: 2 }}>
+              <ActionButton
+                label="Сохранить имя"
+                icon="checkmark-outline"
+                onPress={commitRename}
+                disabled={busy}
+                style={{ flex: 1 }}
+              />
+              <ActionButton
+                label="Удалить"
+                icon="trash-outline"
+                variant="danger"
+                onPress={removeConnection}
+                disabled={busy}
+              />
+            </View>
+          </MonitorCard>
 
-          <LabeledInput
-            label="Имя провайдера"
-            value={selected.description}
-            onChangeText={(v) => apply({ description: v })}
-            autoCapitalize="sentences"
-          />
-          <Text style={{ fontFamily: FONT.regular, fontSize: 11.5, color: colors.textMuted, marginTop: -4, marginBottom: Spacing.sm }}>
-            Вы можете назвать это подключение, как вам удобно.
-          </Text>
-          <View style={{ flexDirection: 'row', gap: Spacing.sm }}>
-            <ActionButton label="Сохранить имя" icon="checkmark-outline" onPress={commitRename} disabled={busy} />
-            <ActionButton label="Удалить" icon="trash-outline" onPress={removeConnection} disabled={busy} />
-          </View>
+          {/* ── Расписание и приоритет ── */}
+          <MonitorCard title="Режим работы">
+            <SelectField
+              label="Расписание работы"
+              value={optionLabel(SCHEDULES, 'always')}
+              onPress={() => pickFrom('Расписание работы', SCHEDULES, () => {})}
+            />
+            <SelectField
+              label="Приоритет подключения"
+              value={optionLabel(PRIORITIES, 'default')}
+              onPress={() => pickFrom('Приоритет подключения', PRIORITIES, () => {})}
+            />
+          </MonitorCard>
 
-          <FormSectionTitle>Параметры подключения</FormSectionTitle>
-          <PageCard title="Получено от роутера">
+          {/* ── Данные подключения ── */}
+          <MonitorCard title="Параметры подключения">
             <ObjectView
               data={{
                 'Идентификатор': selected.id,
@@ -405,157 +435,153 @@ export default function Ethernet() {
                 'Шлюз': selected.gateway ?? '—',
                 'MAC-адрес': selected.mac ?? '—',
                 'MTU': selected.mtu != null ? String(selected.mtu) : '—',
-                'Тип': selected.type ?? '—',
                 'Источник данных': selected.source,
               }}
               maxDepth={1}
             />
-          </PageCard>
+          </MonitorCard>
 
-          <FormSectionTitle>Порты и VLAN'ы</FormSectionTitle>
-          <Text style={{ fontFamily: FONT.regular, fontSize: 12.5, lineHeight: 18, color: colors.textSecondary }}>
-            Если провайдер выдал номера VLAN для подключения к интернету, IP-телевидению или IP-телефонии, введите их
-            в соответствующих полях и выберите порты для приставки IPTV и IP-телефона.
-          </Text>
-          <PortsRow />
-          <Pressable onPress={() => { haptic(); setOpenVlan((v) => !v); }} style={styles.linkRow}>
-            <Text style={{ fontFamily: FONT.medium, fontSize: 13, color: colors.accent }}>
-              VLAN для интернета, IP-телефонии и IP-телевидения
+          {/* ── Порты как в «Системном мониторе» ── */}
+          <MonitorCard title="Сетевые порты">
+            {ports.length > 0 ? (
+              <PortsGrid ports={ports} />
+            ) : (
+              <Text style={{ fontFamily: FONT.regular, fontSize: 13, color: colors.textSecondary }}>
+                Роутер не сообщил список портов.
+              </Text>
+            )}
+          </MonitorCard>
+
+          {/* ── Порты и VLAN'ы ── */}
+          <MonitorCard title="Порты и VLAN'ы">
+            <Text style={{ fontFamily: FONT.regular, fontSize: 12.5, lineHeight: 18, color: colors.textSecondary }}>
+              Если провайдер выдал номера VLAN для интернета, IP-телевидения или IP-телефонии, введите их ниже.
             </Text>
-            <Ionicons name={openVlan ? 'chevron-up' : 'chevron-down'} size={16} color={colors.accent} />
-          </Pressable>
-          {openVlan ? (
-            <View style={{ gap: Spacing.xs, marginTop: Spacing.xs }}>
-              <LabeledInput label="VLAN интернета" value="" placeholder="Не задан" keyboardType="number-pad" />
-              <LabeledInput label="VLAN IP-телефонии" value="" placeholder="Не задан" keyboardType="number-pad" />
-              <LabeledInput label="VLAN IP-телевидения" value="" placeholder="Не задан" keyboardType="number-pad" />
-            </View>
-          ) : null}
+            <Pressable onPress={() => { haptic(); setOpenVlan((v) => !v); }} style={styles.linkRow}>
+              <Text style={{ fontFamily: FONT.medium, fontSize: 13, color: colors.accent }}>
+                VLAN для интернета, IP-телефонии и IP-телевидения
+              </Text>
+              <Ionicons name={openVlan ? 'chevron-up' : 'chevron-down'} size={16} color={colors.accent} />
+            </Pressable>
+            {openVlan ? (
+              <View style={{ marginTop: Spacing.xs }}>
+                <LabeledInput label="VLAN интернета" value="" placeholder="Не задан" keyboardType="number-pad" />
+                <LabeledInput label="VLAN IP-телефонии" value="" placeholder="Не задан" keyboardType="number-pad" />
+                <LabeledInput label="VLAN IP-телевидения" value="" placeholder="Не задан" keyboardType="number-pad" />
+              </View>
+            ) : null}
+          </MonitorCard>
 
-          <FormSectionTitle>Параметры IPv4</FormSectionTitle>
-          {selected.address ? (
-            <View style={[styles.pill, { backgroundColor: colors.online + '22', alignSelf: 'flex-start' }]}>
-              <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.online }} />
-              <Text style={[styles.pillText, { color: colors.online }]}>IP-АДРЕС {selected.address}</Text>
-            </View>
-          ) : null}
-          <SelectField
-            label="Настройка IPv4"
-            value={optionLabel(IPV4_MODES, selected.dhcp === false ? 'static' : 'dhcp')}
-            onPress={() => pickFrom('Настройка IPv4', IPV4_MODES, () => {})}
-          />
-          <CheckboxRow label="Игнорировать DNSv4 интернет-провайдера" checked={false} disabled />
+          {/* ── IPv4 и IPv6 ── */}
+          <MonitorCard title="Параметры IPv4">
+            {selected.address ? (
+              <View style={[styles.pill, { backgroundColor: colors.online + '22', alignSelf: 'flex-start', marginBottom: Spacing.sm }]}>
+                <View style={{ width: 6, height: 6, borderRadius: 3, backgroundColor: colors.online }} />
+                <Text style={[styles.pillText, { color: colors.online }]}>IP-АДРЕС {selected.address}</Text>
+              </View>
+            ) : null}
+            <SelectField
+              label="Настройка IPv4"
+              value={optionLabel(IPV4_MODES, 'dhcp')}
+              onPress={() => pickFrom('Настройка IPv4', IPV4_MODES, () => {})}
+            />
+            <CheckboxRow label="Игнорировать DNSv4 интернет-провайдера" checked={false} disabled />
+          </MonitorCard>
 
-          <FormSectionTitle>Параметры IPv6</FormSectionTitle>
-          <SelectField
-            label="Настройка IPv6"
-            value={optionLabel(IPV6_MODES, 'none')}
-            onPress={() => pickFrom('Настройка IPv6', IPV6_MODES, () => {})}
-          />
+          <MonitorCard title="Параметры IPv6">
+            <SelectField
+              label="Настройка IPv6"
+              value={optionLabel(IPV6_MODES, 'none')}
+              onPress={() => pickFrom('Настройка IPv6', IPV6_MODES, () => {})}
+            />
+          </MonitorCard>
 
-          <FormSectionTitle>Требования провайдера</FormSectionTitle>
-          <SelectField
-            label="MAC-адрес"
-            value={optionLabel(MAC_MODES, 'default')}
-            onPress={() => pickFrom('MAC-адрес', MAC_MODES, () => {})}
-          />
-          <LabeledInput
-            label="Размер MTU"
-            value={selected.mtu != null ? String(selected.mtu) : '1500'}
-            editable={false}
-            keyboardType="numeric"
-          />
+          {/* ── Требования провайдера ── */}
+          <MonitorCard title="Требования провайдера">
+            <SelectField
+              label="MAC-адрес"
+              value={optionLabel(MAC_MODES, 'default')}
+              onPress={() => pickFrom('MAC-адрес', MAC_MODES, () => {})}
+            />
+            <LabeledInput
+              label="Размер MTU"
+              value={selected.mtu != null ? String(selected.mtu) : '1500'}
+              editable={false}
+              keyboardType="numeric"
+            />
+          </MonitorCard>
 
-          <FormSectionTitle>Аутентификация у провайдера (PPPoE / PPTP / L2TP)</FormSectionTitle>
-          <SelectField
-            label="Тип (протокол)"
-            value={optionLabel(AUTH_TYPES, 'none')}
-            onPress={() => pickFrom('Тип (протокол)', AUTH_TYPES, () => {})}
-          />
+          {/* ── Аутентификация и проверки ── */}
+          <MonitorCard title="Аутентификация у провайдера (PPPoE / PPTP / L2TP)">
+            <SelectField
+              label="Тип (протокол)"
+              value={optionLabel(AUTH_TYPES, 'none')}
+              onPress={() => pickFrom('Тип (протокол)', AUTH_TYPES, () => {})}
+            />
+          </MonitorCard>
 
-          <FormSectionTitle>Проверка подлинности по стандарту 802.1x</FormSectionTitle>
-          <SelectField
-            label="Метод проверки подлинности"
-            value={optionLabel(DOT1X_MODES, 'none')}
-            onPress={() => pickFrom('Метод проверки подлинности', DOT1X_MODES, () => {})}
-          />
+          <MonitorCard title="Проверка подлинности 802.1x">
+            <SelectField
+              label="Метод проверки подлинности"
+              value={optionLabel(DOT1X_MODES, 'none')}
+              onPress={() => pickFrom('Метод проверки подлинности', DOT1X_MODES, () => {})}
+            />
+          </MonitorCard>
 
-          <FormSectionTitle>Проверка доступности интернета (Ping Check)</FormSectionTitle>
-          <SelectField
-            label="Режим"
-            value={optionLabel(PING_MODES, 'none')}
-            onPress={() => pickFrom('Режим', PING_MODES, () => {})}
-          />
+          <MonitorCard title="Проверка доступности интернета (Ping Check)">
+            <SelectField
+              label="Режим"
+              value={optionLabel(PING_MODES, 'none')}
+              onPress={() => pickFrom('Режим', PING_MODES, () => {})}
+            />
+          </MonitorCard>
 
-          {/* ── Сырые данные: видно ровно то, что ответил роутер ── */}
-          <Pressable onPress={() => { haptic(); setShowRaw((v) => !v); }} style={styles.linkRow}>
-            <Ionicons name={showRaw ? 'chevron-up' : 'chevron-down'} size={16} color={colors.textMuted} />
-            <Text style={{ fontFamily: FONT.medium, fontSize: 13, color: colors.textSecondary, marginLeft: 6 }}>
-              Данные с роутера
-            </Text>
-          </Pressable>
-          {showRaw ? (
-            <>
-              <PageCard title="show /ip/interface">
-                <ObjectView data={raw?.ipIface ?? null} maxDepth={4} />
-              </PageCard>
-              <PageCard title="show /interface">
-                <ObjectView data={raw?.ifaces ?? null} maxDepth={3} />
-              </PageCard>
-            </>
-          ) : null}
+          {/* ── Сырые данные роутера ── */}
+          <MonitorCard
+            title="Данные с роутера"
+            right={
+              <Pressable onPress={() => { haptic(); setShowRaw((v) => !v); }} hitSlop={10}>
+                <Ionicons name={showRaw ? 'chevron-up' : 'chevron-down'} size={18} color={colors.textSecondary} />
+              </Pressable>
+            }
+          >
+            {showRaw ? (
+              <View style={{ gap: Spacing.md }}>
+                <View>
+                  <Text style={styles.rawLabel}>show /ip/interface</Text>
+                  <ObjectView data={raw?.ipIface ?? null} maxDepth={4} />
+                </View>
+                <View>
+                  <Text style={styles.rawLabel}>show /interface</Text>
+                  <ObjectView data={raw?.ifaces ?? null} maxDepth={3} />
+                </View>
+              </View>
+            ) : (
+              <Text style={{ fontFamily: FONT.regular, fontSize: 12.5, color: colors.textSecondary }}>
+                Ответы роутера как есть — раскройте, если что-то отображается неверно.
+              </Text>
+            )}
+          </MonitorCard>
         </>
       ) : null}
     </View>
   );
 }
 
-/** Ряд портов Ethernet с нумерацией и слотом SFP. */
-function PortsRow() {
-  const { colors, haptic } = useSettings();
-  const [picked, setPicked] = useState<string | null>(null);
-
-  return (
-    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: Spacing.xs }}>
-      {['0', '1', '2', '3', '4'].map((p) => {
-        const active = picked === p;
-        return (
-          <Pressable
-            key={p}
-            onPress={() => {
-              haptic();
-              setPicked(active ? null : p);
-            }}
-            style={[
-              styles.port,
-              { backgroundColor: active ? colors.accent : colors.card, borderColor: active ? colors.accent : colors.border },
-            ]}
-          >
-            <Ionicons name="git-network-outline" size={18} color={active ? '#FFFFFF' : colors.textSecondary} />
-            <Text style={{ fontFamily: FONT.semiBold, fontSize: 12, color: active ? '#FFFFFF' : colors.text, marginTop: 2 }}>
-              {p}
-            </Text>
-          </Pressable>
-        );
-      })}
-      <View
-        style={[
-          styles.port,
-          { backgroundColor: colors.cardAlt, borderColor: colors.border, borderStyle: 'dashed', flexDirection: 'row', gap: 4 },
-        ]}
-      >
-        <Ionicons name="git-network-outline" size={18} color={colors.textMuted} />
-        <Text style={{ fontFamily: FONT.semiBold, fontSize: 11, color: colors.textSecondary, marginTop: 2 }}>SFP</Text>
-      </View>
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
-  inlineRow: {
+  headerRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: Spacing.sm,
+    gap: 8,
+  },
+  helpBtn: {
+    padding: 2,
+  },
+  tab: {
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: Radius.pill,
+    borderWidth: StyleSheet.hairlineWidth,
   },
   pill: {
     flexDirection: 'row',
@@ -564,7 +590,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     paddingVertical: 5,
     borderRadius: Radius.pill,
-    alignSelf: 'flex-start',
   },
   pillText: {
     fontFamily: FONT.semiBold,
@@ -576,14 +601,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    paddingVertical: 8,
+    paddingVertical: 10,
   },
-  port: {
-    width: 54,
-    height: 52,
-    borderRadius: Radius.sm,
-    borderWidth: StyleSheet.hairlineWidth,
-    alignItems: 'center',
-    justifyContent: 'center',
+  rawLabel: {
+    fontFamily: FONT.semiBold,
+    fontSize: 12,
+    letterSpacing: 0.6,
+    textTransform: 'uppercase',
+    marginBottom: 6,
   },
 });

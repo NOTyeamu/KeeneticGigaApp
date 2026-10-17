@@ -4,21 +4,22 @@ import { useSettings } from '../context/SettingsContext';
 import { FONT, Radius, Spacing } from '../theme/colors';
 
 /**
- * Элементы форм в стиле веб-интерфейса KeeneticOS: поля с «плавающей»
- * подписью внутри рамки, выпадающие списки и кнопки. Используются страницами
- * настроек подключений (Ethernet, Mobile и т.п.).
+ * Элементы форм в стиле настроек KeeneticOS.
+ *
+ * Подпись стоит НАД полем, а не поверх его рамки: раньше подпись лежала на
+ * рамке и перекрывала само поле. Такой вид читается проще и не мешает вводу.
  */
 
 export function FieldLabel({ children }: { children: React.ReactNode }) {
   const { colors } = useSettings();
   return (
-    <Text style={{ fontFamily: FONT.regular, fontSize: 12, color: colors.textSecondary, marginBottom: 6 }}>
+    <Text style={{ fontFamily: FONT.medium, fontSize: 12.5, color: colors.textSecondary, marginBottom: 6 }}>
       {children}
     </Text>
   );
 }
 
-/** Поле ввода, повторяющее вид поля веб-интерфейса (подпись — сверху в рамке). */
+/** Поле ввода с подписью над ним. */
 export function LabeledInput({
   label,
   value,
@@ -38,33 +39,33 @@ export function LabeledInput({
 }) {
   const { colors } = useSettings();
   return (
-    <View
-      style={[
-        styles.fieldBox,
-        { backgroundColor: colors.inputBg, borderColor: colors.border, opacity: editable ? 1 : 0.55 },
-      ]}
-    >
-      {label ? (
-        <Text style={[styles.floatLabel, { color: colors.textMuted, backgroundColor: colors.inputBg }]} numberOfLines={1}>
-          {label}
-        </Text>
-      ) : null}
-      <TextInput
-        value={value}
-        onChangeText={onChangeText}
-        placeholder={placeholder}
-        placeholderTextColor={colors.textMuted}
-        editable={editable}
-        keyboardType={keyboardType === 'url' ? 'url' : keyboardType === 'numeric' ? 'numeric' : 'default'}
-        autoCapitalize={autoCapitalize}
-        autoCorrect={false}
-        style={{ flex: 1, fontFamily: FONT.regular, fontSize: 14, color: colors.text, paddingHorizontal: 12 }}
-      />
+    <View style={{ marginBottom: Spacing.sm }}>
+      {label ? <FieldLabel>{label}</FieldLabel> : null}
+      <View
+        style={[
+          styles.fieldBox,
+          { backgroundColor: colors.inputBg, borderColor: colors.border, opacity: editable ? 1 : 0.55 },
+        ]}
+      >
+        <TextInput
+          value={value}
+          onChangeText={onChangeText}
+          placeholder={placeholder}
+          placeholderTextColor={colors.textMuted}
+          editable={editable}
+          keyboardType={
+            keyboardType === 'url' ? 'url' : keyboardType === 'default' ? 'default' : keyboardType === 'numeric' ? 'numeric' : 'default'
+          }
+          autoCapitalize={autoCapitalize}
+          autoCorrect={false}
+          style={{ flex: 1, fontFamily: FONT.regular, fontSize: 14, color: colors.text, paddingHorizontal: 12 }}
+        />
+      </View>
     </View>
   );
 }
 
-/** Выпадающий список: касание открывает выбор через переданный обработчик. */
+/** Выпадающий список с подписью над ним. */
 export function SelectField({
   label,
   value,
@@ -78,31 +79,29 @@ export function SelectField({
 }) {
   const { colors, haptic } = useSettings();
   return (
-    <Pressable
-      onPress={() => {
-        if (disabled) return;
-        haptic();
-        onPress?.();
-      }}
-      disabled={disabled || !onPress}
-      android_ripple={{ color: colors.accentSoft }}
-      style={[
-        styles.fieldBox,
-        { backgroundColor: colors.inputBg, borderColor: colors.border, opacity: disabled ? 0.55 : 1 },
-      ]}
-    >
-      {label ? (
-        <Text style={[styles.floatLabel, { color: colors.textMuted, backgroundColor: colors.inputBg }]} numberOfLines={1}>
-          {label}
-        </Text>
-      ) : null}
-      <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12 }}>
-        <Text style={{ flex: 1, fontFamily: FONT.regular, fontSize: 14, color: colors.text }} numberOfLines={1}>
-          {value}
-        </Text>
-        <Ionicons name="chevron-down" size={16} color={colors.textMuted} />
-      </View>
-    </Pressable>
+    <View style={{ marginBottom: Spacing.sm }}>
+      {label ? <FieldLabel>{label}</FieldLabel> : null}
+      <Pressable
+        onPress={() => {
+          if (disabled) return;
+          haptic();
+          onPress?.();
+        }}
+        disabled={disabled || !onPress}
+        android_ripple={{ color: colors.accentSoft }}
+        style={[
+          styles.fieldBox,
+          { backgroundColor: colors.inputBg, borderColor: colors.border, opacity: disabled ? 0.55 : 1 },
+        ]}
+      >
+        <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12 }}>
+          <Text style={{ flex: 1, fontFamily: FONT.regular, fontSize: 14, color: colors.text }} numberOfLines={1}>
+            {value}
+          </Text>
+          <Ionicons name="chevron-down" size={16} color={colors.textMuted} />
+        </View>
+      </Pressable>
+    </View>
   );
 }
 
@@ -145,7 +144,7 @@ export function CheckboxRow({
   );
 }
 
-/** Кнопка действия в стиле веб-интерфейса (контурная либо акцентная). */
+/** Кнопка действия (контурная, акцентная или опасная). */
 export function ActionButton({
   label,
   icon,
@@ -198,24 +197,6 @@ export function ActionButton({
   );
 }
 
-/** Заголовок раздела внутри страницы (как «Порты и VLAN'ы» в вебе). */
-export function FormSectionTitle({ children }: { children: React.ReactNode }) {
-  const { colors } = useSettings();
-  return (
-    <Text
-      style={{
-        fontFamily: FONT.semiBold,
-        fontSize: 16,
-        color: colors.text,
-        marginTop: Spacing.md,
-        marginBottom: Spacing.xs,
-      }}
-    >
-      {children}
-    </Text>
-  );
-}
-
 const styles = StyleSheet.create({
   fieldBox: {
     flexDirection: 'row',
@@ -223,15 +204,6 @@ const styles = StyleSheet.create({
     height: 44,
     borderRadius: Radius.sm,
     borderWidth: StyleSheet.hairlineWidth,
-    marginBottom: Spacing.sm,
-  },
-  floatLabel: {
-    position: 'absolute',
-    top: -8,
-    left: 10,
-    paddingHorizontal: 4,
-    fontFamily: FONT.regular,
-    fontSize: 11,
   },
   checkRow: {
     flexDirection: 'row',

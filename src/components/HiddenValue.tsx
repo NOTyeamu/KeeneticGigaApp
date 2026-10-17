@@ -64,9 +64,8 @@ export function HiddenValue({ value, hint, onChangePress }: HiddenValueProps) {
     copyTimer.current = setTimeout(() => setCopied(false), 1200);
   };
 
-  // Размытый слой уезжает и растворяется, открывая чёткий адрес.
+  // Панель гаснет, а чёткий адрес проявляется ей на смену.
   const blurOpacity = reveal.interpolate({ inputRange: [0, 1], outputRange: [1, 0] });
-  const blurScale = reveal.interpolate({ inputRange: [0, 1], outputRange: [1, 1.05] });
   const textOpacity = reveal.interpolate({ inputRange: [0, 0.35, 1], outputRange: [0, 0, 1] });
 
   return (
@@ -92,24 +91,25 @@ export function HiddenValue({ value, hint, onChangePress }: HiddenValueProps) {
           </Text>
         </Animated.View>
 
-        {/* Размытый адрес — лежит сверху, пока значение скрыто. */}
-        <Animated.View
-          pointerEvents="none"
-          style={[styles.blurLayer, { opacity: blurOpacity, transform: [{ scaleX: blurScale }] }]}
-        >
-          {/* Панель без адреса внутри: пока значение скрыто, рисовать нечего,
-              поэтому подглядывать нечего. */}
-          <BlurPanel cardColor={colors.card} accent={colors.accent} height={PANEL_H} />
-          {/* Значок по центру панели: подсказывает, что значение скрыто. */}
-          <View style={styles.centerIcon} pointerEvents="none">
+        {/* Панель без значения внутри: пока оно скрыто, рисовать нечего,
+            поэтому подглядывать нечего. При раскрытии точки разлетаются
+            из центра, а значок гаснет вместе с ними. */}
+        <View style={styles.blurLayer} pointerEvents="none">
+          <BlurPanel
+            cardColor={colors.card}
+            accent={colors.accent}
+            height={PANEL_H}
+            reveal={reveal}
+          />
+          <Animated.View style={[styles.centerIcon, { opacity: blurOpacity }]} pointerEvents="none">
             <Ionicons
               name="eye-off-outline"
               size={17}
               color={colors.text}
               style={styles.centerIconGlyph}
             />
-          </View>
-        </Animated.View>
+          </Animated.View>
+        </View>
       </Pressable>
 
       {hint || onChangePress ? (
