@@ -118,7 +118,6 @@ export default function Ethernet() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [openVlan, setOpenVlan] = useState(false);
-  const [showRaw, setShowRaw] = useState(false);
   const [overrides, setOverrides] = useState<Record<string, Partial<EthConn>>>({});
 
   const raw = req.data as { ifaces: unknown; ipIface: unknown } | null;
@@ -458,10 +457,14 @@ export default function Ethernet() {
               Если провайдер выдал номера VLAN для интернета, IP-телевидения или IP-телефонии, введите их ниже.
             </Text>
             <Pressable onPress={() => { haptic(); setOpenVlan((v) => !v); }} style={styles.linkRow}>
-              <Text style={{ fontFamily: FONT.medium, fontSize: 13, color: colors.accent }}>
+              {/* Стрелка у самого края уходила за границу панели — отодвигаем её
+                  вправо отступом, а текст занимает всё остальное место. */}
+              <Text style={{ flex: 1, fontFamily: FONT.medium, fontSize: 13, color: colors.accent }}>
                 VLAN для интернета, IP-телефонии и IP-телевидения
               </Text>
-              <Ionicons name={openVlan ? 'chevron-up' : 'chevron-down'} size={16} color={colors.accent} />
+              <View style={styles.linkIcon}>
+                <Ionicons name={openVlan ? 'chevron-up' : 'chevron-down'} size={16} color={colors.accent} />
+              </View>
             </Pressable>
             {openVlan ? (
               <View style={{ marginTop: Spacing.xs }}>
@@ -536,33 +539,7 @@ export default function Ethernet() {
             />
           </MonitorCard>
 
-          {/* ── Сырые данные роутера ── */}
-          <MonitorCard
-            title="Данные с роутера"
-            right={
-              <Pressable onPress={() => { haptic(); setShowRaw((v) => !v); }} hitSlop={10}>
-                <Ionicons name={showRaw ? 'chevron-up' : 'chevron-down'} size={18} color={colors.textSecondary} />
-              </Pressable>
-            }
-          >
-            {showRaw ? (
-              <View style={{ gap: Spacing.md }}>
-                <View>
-                  <Text style={styles.rawLabel}>show /ip/interface</Text>
-                  <ObjectView data={raw?.ipIface ?? null} maxDepth={4} />
-                </View>
-                <View>
-                  <Text style={styles.rawLabel}>show /interface</Text>
-                  <ObjectView data={raw?.ifaces ?? null} maxDepth={3} />
-                </View>
-              </View>
-            ) : (
-              <Text style={{ fontFamily: FONT.regular, fontSize: 12.5, color: colors.textSecondary }}>
-                Ответы роутера как есть — раскройте, если что-то отображается неверно.
-              </Text>
-            )}
-          </MonitorCard>
-        </>
+          </>
       ) : null}
     </View>
   );
@@ -600,14 +577,14 @@ const styles = StyleSheet.create({
   linkRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
     paddingVertical: 10,
   },
-  rawLabel: {
-    fontFamily: FONT.semiBold,
-    fontSize: 12,
-    letterSpacing: 0.6,
-    textTransform: 'uppercase',
-    marginBottom: 6,
+  /** Место под стрелку у правого края панели, чтобы она не упиралась в рамку. */
+  linkIcon: {
+    width: 24,
+    marginLeft: 8,
+    marginRight: 2,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
-});
+  });
