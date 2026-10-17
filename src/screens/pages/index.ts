@@ -24,6 +24,7 @@ import GeneralSettings from './GeneralSettings';
 import SystemUpdate from './SystemUpdate';
 import Backup from './Backup';
 import Diagnostics from './Diagnostics';
+import PcLogin from './PcLogin';
 
 const REGISTRY: Record<string, ComponentType> = {
   SystemMonitor,
@@ -50,6 +51,7 @@ const REGISTRY: Record<string, ComponentType> = {
   SystemUpdate,
   Backup,
   Diagnostics,
+  PcLogin,
 };
 
 export function getPageComponent(page: string): ComponentType | null {

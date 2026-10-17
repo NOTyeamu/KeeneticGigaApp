@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Вход в роутер — связка с телефоном</title>
+<style>
+  :root { --bg:#0A0F14; --card:#111A22; --text:#E6F1F8; --muted:#7B9AB0; --accent:#00B4FF; --danger:#FF5C5C; --ok:#34D399; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family: 'Segoe UI', Roboto, system-ui, sans-serif;
+         min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px; }
+  .card { width:100%; max-width:520px; background:var(--card); border:1px solid #1B2C3A; border-radius:20px; padding:24px; }
+  h1 { font-size:20px; margin:0 0 6px; font-weight:600; }
+  .sub { font-size:13px; color:var(--muted); margin:0 0 20px; line-height:1.5; }
+
+  video, canvas.preview { width:100%; border-radius:14px; background:#000; display:block; }
+  video { aspect-ratio: 4/3; object-fit: cover; }
+
+  .btn { width:100%; height:48px; border:0; border-radius:14px; font-size:15px; font-weight:600;
+         cursor:pointer; margin-top:14px; transition: opacity .15s; }
+  .btn:disabled { opacity:.5; cursor:default; }
+  .btn.primary { background:var(--accent); color:#fff; }
+  .btn.ghost { background:transparent; color:var(--text); border:1px solid #1B2C3A; }
+
+  .status { font-size:13px; color:var(--muted); margin-top:14px; line-height:1.5; min-height:20px; }
+  .status.ok { color:var(--ok); }
+  .status.err { color:var(--danger); }
+
+  .steps { font-size:13px; color:var(--muted); line-height:1.7; margin:0; padding-left:20px; }
+  .steps b { color:var(--text); }
+  .hidden { display:none; }
+
+  .found { background:rgba(52,211,153,.08); border:1px solid rgba(52,211,153,.35); border-radius:14px; padding:14px; margin-top:14px; }
+  .found .row { display:flex; justify-content:space-between; gap:12px; font-size:13px; padding:4px 0; }
+  .found .k { color:var(--muted); }
+  .found .v { font-weight:600; word-break:break-all; text-align:right; }
+
+  .warn { background:rgba(255,92,92,.08); border:1px solid rgba(255,92,92,.35); border-radius:14px;
+          padding:14px; margin-top:14px; font-size:13px; line-height:1.6; color:#FFB4B4; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Вход в роутер с телефона</h1>
+  <p class="sub">Наведите камеру на QR-код из приложения. Данные передадутся в открытую страницу роутера, и вход выполнится сам.</p>
+
+  <div id="intro">
+    <ol class="steps">
+      <li>В приложении: <b>Настройки → Вход с компьютера</b> — появится QR-код.</li>
+      <li>Здесь нажмите <b>«Включить камеру»</b> и наведите её на код.</li>
+      <li>Откроется страница роутера и войдёт автоматически.</li>
+    </ol>
+    <div class="warn" id="extensionWarn">
+      Для автоматического входа нужно расширение <b>Tampermonkey</b> в браузере и установленный скрипт.
+      Без него страница роутера откроется, но данные в неё не передадутся.
+      <button class="btn ghost" id="scriptBtn" style="margin-top:10px;height:40px;font-size:13px">Скачать скрипт для Tampermonkey</button>
+    </div>
+  </div>
+
+  <button class="btn primary" id="startBtn">Включить камеру</button>
+
+  <div id="scan" class="hidden">
+    <video id="video" playsinline muted></video>
+    <p class="status" id="scanStatus">Наведите камеру на QR-код…</p>
+    <button class="btn ghost" id="stopBtn">Остановить</button>
+  </div>
+
+  <div id="result" class="hidden">
+    <div class="found">
+      <div class="row"><span class="k">Роутер</span><span class="v" id="rHost">—</span></div>
+      <div class="row"><span class="k">Логин</span><span class="v" id="rLogin">—</span></div>
+      <div class="row"><span class="k">Пароль</span><span class="v" id="rPass">—</span></div>
+    </div>
+    <button class="btn primary" id="openBtn">Открыть роутер и войти</button>
+    <button class="btn ghost" id="copyBtn">Скопировать пароль</button>
+    <p class="status" id="resultStatus"></p>
+  </div>
+
+  <p class="status" id="status"></p>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<script>
+// ─────────────────────────────────────────────────────────────
+// Связка «телефон → компьютер».
+//
+// Камера доступна только в защищённом контексте, а страница роутера
+// открывается по обычному http:// на локальном адресе — это НЕ защищённый
+// контекст, там navigator.mediaDevices не существует. Поэтому камера здесь,
+// на этой странице, а данные передаются в окно роутера через сообщение:
+// страницу роутера слушает скрипт для Tampermonkey.
+// ─────────────────────────────────────────────────────────────
+
+const SCRIPT_URL = 'keenetic-pair.user.js';
+const MSG_TYPE = 'keenetic-giga-pair';
+
+const el = (id) => document.getElementById(id);
+const intro = el('intro'), scan = el('scan'), result = el('result');
+const status = el('status'), scanStatus = el('scanStatus'), resultStatus = el('resultStatus');
+
+let stream = null;
+let raf = null;
+let pair = null;
+let routerWindow = null;
+
+function setStatus(node, text, kind) {
+  node.textContent = text || '';
+  node.className = 'status' + (kind ? ' ' + kind : '');
+}
+
+// ── Открываем окно роутера СРАЗУ при первом нажатии: иначе браузер сочтёт
+// его всплывающим и заблокирует. Позже мы просто отдадим в него данные.
+function openRouterWindow(url) {
+  routerWindow = window.open(url, 'keenetic_router');
+  return routerWindow;
+}
+
+function sendToRouter() {
+  if (!pair) return false;
+  if (!routerWindow || routerWindow.closed) {
+    routerWindow = window.open(pair.url, 'keenetic_router');
+  }
+  if (!routerWindow) {
+    setStatus(resultStatus, 'Браузер заблокировал открытие окна. Разрешите всплывающие окна для этой страницы.', 'err');
+    return false;
+  }
+
+  const payload = {
+    type: MSG_TYPE,
+    login: pair.login,
+    password: pair.password,
+    url: pair.url,
+    sentAt: Date.now(),
+  };
+
+  // Отправляем несколько раз: страница роутера грузится не мгновенно, и
+  // ранние сообщения могут уйти до того, как скрипт начнёт слушать. Повтор
+  // безвреден — скрипт отзывается только на первое полученное сообщение.
+  let sent = 0;
+  const timer = setInterval(() => {
+    sent++;
+    try {
+      routerWindow.postMessage(payload, '*');
+    } catch (e) {
+      /* окно могло закрыться */
+    }
+    if (sent >= 20) clearInterval(timer);
+  }, 700);
+
+  setStatus(resultStatus, 'Данные отправлены. Если в окне роутера вход не произошёл сам — установите скрипт для Tampermonkey.', 'ok');
+  return true;
+}
+
+async function startCamera() {
+  setStatus(status, '');
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    setStatus(status, 'Камера недоступна: страница должна открываться по HTTPS. Откройте её по адресу https://…', 'err');
+    return;
+  }
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: 'environment', width: { ideal: 1280 } },
+      audio: false,
+    });
+  } catch (e) {
+    setStatus(status, 'Нет доступа к камере: ' + (e && e.message ? e.message : e), 'err');
+    return;
+  }
+
+  intro.classList.add('hidden');
+  scan.classList.remove('hidden');
+  const video = el('video');
+  video.srcObject = stream;
+  await video.play();
+  tick();
+}
+
+function stopCamera() {
+  if (raf) cancelAnimationFrame(raf);
+  raf = null;
+  if (stream) {
+    stream.getTracks().forEach((t) => t.stop());
+    stream = null;
+  }
+  scan.classList.add('hidden');
+  intro.classList.remove('hidden');
+}
+
+function tick() {
+  const video = el('video');
+  if (!stream || !video.videoWidth) {
+    raf = requestAnimationFrame(tick);
+    return;
+  }
+
+  const canvas = document.createElement('canvas');
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+  let data = null;
+  try {
+    data = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  } catch (e) {
+    setStatus(scanStatus, 'Не удалось прочитать кадр: ' + e.message, 'err');
+    return;
+  }
+
+  const code = window.jsQR ? window.jsQR(data.data, data.width, data.height, { inversionAttempts: 'attemptBoth' }) : null;
+  if (code && code.data) {
+    onDecoded(code.data);
+    return;
+  }
+  raf = requestAnimationFrame(tick);
+}
+
+function onDecoded(raw) {
+  let parsed = null;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    parsed = null;
+  }
+
+  if (!parsed || !parsed.url || !parsed.login) {
+    setStatus(scanStatus, 'Это не код из приложения. Откройте QR в приложении: Настройки → Вход с компьютера.', 'err');
+    raf = requestAnimationFrame(tick);
+    return;
+  }
+
+  pair = {
+    url: String(parsed.url),
+    login: String(parsed.login),
+    password: String(parsed.password || ''),
+  };
+
+  // Останавливаем камеру и показываем, что нашли.
+  if (raf) cancelAnimationFrame(raf);
+  raf = null;
+  if (stream) {
+    stream.getTracks().forEach((t) => t.stop());
+    stream = null;
+  }
+  scan.classList.add('hidden');
+  result.classList.remove('hidden');
+
+  el('rHost').textContent = pair.url;
+  el('rLogin').textContent = pair.login;
+  el('rPass').textContent = pair.password ? '•'.repeat(Math.min(16, pair.password.length)) : '—';
+
+  // Пробуем передать сразу — окно роутера при этом открывается.
+  sendToRouter();
+}
+
+el('startBtn').addEventListener('click', startCamera);
+el('stopBtn').addEventListener('click', stopCamera);
+el('openBtn').addEventListener('click', sendToRouter);
+el('copyBtn').addEventListener('click', async () => {
+  if (!pair) return;
+  try {
+    await navigator.clipboard.writeText(pair.password);
+    setStatus(resultStatus, 'Пароль скопирован — вставьте его в поле пароля на странице роутера.', 'ok');
+  } catch (e) {
+    setStatus(resultStatus, 'Браузер не разрешил копирование. Выделите пароль вручную.', 'err');
+  }
+});
+el('scriptBtn').addEventListener('click', () => {
+  const a = document.createElement('a');
+  a.href = SCRIPT_URL;
+  a.download = 'keenetic-pair.user.js';
+  a.click();
+});
+</script>
+</body>
+</html>

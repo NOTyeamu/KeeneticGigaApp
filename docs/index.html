@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Keenetic Giga — вспомогательные страницы</title>
+<style>
+  :root { --bg:#0A0F14; --card:#111A22; --text:#E6F1F8; --muted:#7B9AB0; --accent:#00B4FF; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:'Segoe UI',Roboto,system-ui,sans-serif;
+         min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px; }
+  .card { width:100%; max-width:520px; background:var(--card); border:1px solid #1B2C3A; border-radius:20px; padding:26px; }
+  h1 { font-size:21px; margin:0 0 6px; font-weight:600; }
+  p { color:var(--muted); font-size:14px; line-height:1.6; margin:0 0 18px; }
+  a.btn { display:flex; align-items:center; justify-content:space-between; gap:12px; text-decoration:none;
+          color:var(--text); background:#0F1A24; border:1px solid #1B2C3A; border-radius:14px;
+          padding:16px; margin-bottom:12px; transition:border-color .15s; }
+  a.btn:hover { border-color:var(--accent); }
+  .t { font-weight:600; font-size:15px; }
+  .d { color:var(--muted); font-size:12.5px; margin-top:3px; }
+  .arrow { color:var(--accent); font-size:20px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Keenetic Giga</h1>
+  <p>Вспомогательные страницы для приложения. Они работают целиком в браузере — данные никуда не отправляются.</p>
+
+  <a class="btn" href="pair.html">
+    <span>
+      <span class="t">Вход с компьютера</span>
+      <span class="d">Отсканировать QR из приложения и войти в роутер</span>
+    </span>
+    <span class="arrow">→</span>
+  </a>
+
+  <a class="btn" href="keenetic-pair.user.js">
+    <span>
+      <span class="t">Скрипт для Tampermonkey</span>
+      <span class="d">Нужен для автоматического входа на компьютере</span>
+    </span>
+    <span class="arrow">→</span>
+  </a>
+
+  <a class="btn" href="blur-preview.html">
+    <span>
+      <span class="t">Вид панели скрытого адреса</span>
+      <span class="d">Как выглядит скрытый адрес в настройках приложения</span>
+    </span>
+    <span class="arrow">→</span>
+  </a>
+</div>
+</body>
+</html>

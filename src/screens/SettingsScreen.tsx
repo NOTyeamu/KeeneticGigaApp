@@ -332,7 +332,18 @@ export function SettingsScreen() {
 
       <SectionLabel colors={colors}>Приложение</SectionLabel>
       <View style={[styles.group, { borderColor: colors.border, backgroundColor: colors.card }]}>
-        <ListButton title="О приложении" icon="information-circle-outline" first last onPress={showAbout} />
+        <ListButton
+          title="Вход с компьютера"
+          icon="qr-code-outline"
+          subtitle="Перенести данные роутера на ПК по QR-коду"
+          first
+          onPress={() => {
+            haptic();
+            navigation.navigate('SettingsPage', { title: 'Вход с компьютера', page: 'PcLogin' });
+          }}
+        />
+        <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: colors.divider, marginLeft: 58 }} />
+        <ListButton title="О приложении" icon="information-circle-outline" last onPress={showAbout} />
       </View>
 
       <View style={{ marginTop: Spacing.xl }} />
