@@ -105,7 +105,7 @@ export function HiddenValue({ value, hint, onChangePress }: HiddenValueProps) {
             cardColor={colors.card}
             accent={colors.accent}
             size={14}
-            height={34}
+            height={PANEL_H}
           >
             {value}
           </BlurredText>
@@ -143,9 +143,13 @@ export function HiddenValue({ value, hint, onChangePress }: HiddenValueProps) {
   );
 }
 
+/** Высота панели: подобрана по макету — размытию нужно место, иначе оно
+ *  обрезается краями и выглядит бугристой полосой. */
+const PANEL_H = 44;
+
 const styles = StyleSheet.create({
   stack: {
-    height: 34,
+    height: PANEL_H,
     justifyContent: 'center',
     borderRadius: Radius.sm,
     overflow: 'hidden',
@@ -160,7 +164,7 @@ const styles = StyleSheet.create({
     top: 0,
     left: 0,
     right: 0,
-    height: 34,
+    height: PANEL_H,
     borderRadius: Radius.sm,
     overflow: 'hidden',
     justifyContent: 'center',

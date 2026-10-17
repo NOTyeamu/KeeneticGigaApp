@@ -5,7 +5,6 @@ import {
   Text as SkText,
   Blur,
   Circle,
-  Group,
   Rect,
   LinearGradient,
   matchFont,
@@ -28,10 +27,16 @@ import {
  * тон карточки накладываются поверх содержимого.
  */
 
-/** Подобрано так, чтобы буквы сливались в пятно, но угадывались очертания. */
-const BLUR_SIGMA = 9;
+/**
+ * Сила размытия адреса. Подобрана по макету: панель высотой 44 px, а размытие
+ * шире панели обрезается её краями и превращается в бугристую полосу — именно
+ * это и выглядело как «много квадратиков».
+ */
+const BLUR_SIGMA = 7;
+/** Размытие шариков: применяется к каждому отдельно. */
+const BUBBLE_BLUR = 5;
 /** Ширина мягкого края в пикселях. */
-const FADE = 9;
+const FADE = 12;
 /** Запас по краям для дрейфа шариков, чтобы панель не «худела». */
 const OVERSCAN = 14;
 
@@ -146,20 +151,20 @@ export function BlurredText({
               }}
             >
               <Canvas style={{ width: width + OVERSCAN * 2, height: height + OVERSCAN * 2 }}>
-                <Group>
-                  {/* Один фильтр на всю группу: так размытие считается один раз. */}
-                  <Blur blur={7} mode="clamp" />
-                  {BUBBLES.map((b, i) => (
-                    <Circle
-                      key={i}
-                      cx={OVERSCAN + b.x * width}
-                      cy={OVERSCAN + b.y * height}
-                      r={b.r}
-                      color={accent}
-                      opacity={b.o}
-                    />
-                  ))}
-                </Group>
+                {BUBBLES.map((b, i) => (
+                  <Circle
+                    key={i}
+                    cx={OVERSCAN + b.x * width}
+                    cy={OVERSCAN + b.y * height}
+                    r={b.r}
+                    color={accent}
+                    opacity={b.o}
+                  >
+                    {/* Фильтр на каждом круге: размытие, заданное на группе,
+                        у кругов не срабатывало — они рисовались резкими. */}
+                    <Blur blur={BUBBLE_BLUR} />
+                  </Circle>
+                ))}
               </Canvas>
             </Animated.View>
           </View>
@@ -168,11 +173,11 @@ export function BlurredText({
           <View style={StyleSheet.absoluteFill} pointerEvents="none">
             <Canvas style={{ width, height }}>
               {/* Сам адрес: два прохода размытия, иначе буквы угадываются. */}
-              <SkText x={8} y={baseline} text={shown} font={font} color={color} opacity={0.85}>
-                <Blur blur={BLUR_SIGMA} mode="clamp" />
+              <SkText x={8} y={baseline} text={shown} font={font} color={color} opacity={0.8}>
+                <Blur blur={BLUR_SIGMA} />
               </SkText>
-              <SkText x={8} y={baseline} text={shown} font={font} color={color} opacity={0.6}>
-                <Blur blur={BLUR_SIGMA * 2} mode="clamp" />
+              <SkText x={8} y={baseline} text={shown} font={font} color={color} opacity={0.55}>
+                <Blur blur={BLUR_SIGMA * 1.6} />
               </SkText>
 
               {/* Мягкие края: градиенты в тон карточки поверх содержимого,
