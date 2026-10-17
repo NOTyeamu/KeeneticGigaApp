@@ -2,6 +2,8 @@ import { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Switch, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { LoadingState, ErrorState, EmptyState } from '../../components/States';
+import { PageCard } from '../../components/PageParts';
+import { ObjectView } from '../../components/ObjectView';
 import {
   ActionButton,
   CheckboxRow,
@@ -13,73 +15,71 @@ import { useAlert, useAlertDialog } from '../../components/AlertDialog';
 import { useApi } from '../../hooks/useApi';
 import { useCreds } from '../../hooks/useCreds';
 import { Api, toArray } from '../../lib/api';
+import { asInterfaces, hasRole, ifaceId, ifaceName, isUp, type Iface } from '../../lib/interfaces';
 import { useSettings } from '../../context/SettingsContext';
 import { FONT, Radius, Spacing } from '../../theme/colors';
 
 /**
- * «Кабель Ethernet» — страница проводного интернет-подключения, повторяющая
+ * «Кабель Ethernet» — страница проводных интернет-подключений, повторяющая
  * веб-интерфейс KeeneticOS: список подключений, расписание, приоритет, имя
  * провайдера, порты и VLAN'ы, параметры IPv4/IPv6, требования провайдера,
  * аутентификация PPPoE/PPTP/L2TP, 802.1x и Ping Check.
  *
- * Данные берутся из RCI (`show/ip/interface` + `show rc interface`); состав
- * полей зависит от прошивки, поэтому отсутствующие значения показываются
- * как «—», а недоступные переключатели — заблокированными.
+ * Данные берутся из двух источников сразу:
+ *  - `show/interface` — интерфейсы с ролью `inet` (проверенный источник, по нему
+ *    же работал прежний список подключений);
+ *  - `show/ip/interface` — параметры IP-стека подключений.
+ *
+ * Источники объединяются: если один из них на этой прошивке отдаёт другое или
+ * пустое, страница всё равно покажет подключения из второго, а сырые ответы
+ * всегда видны в самом низу — чтобы не приходилось гадать, что вернул роутер.
  */
 
 const SCHEDULES = [
   { value: 'always', label: 'Работает постоянно' },
   { value: 'schedule', label: 'По расписанию' },
 ];
-
 const PRIORITIES = [
   { value: 'default', label: 'Основное подключение' },
   { value: 'backup', label: 'Резервное подключение' },
 ];
-
 const IPV4_MODES = [
   { value: 'dhcp', label: 'Автоматическая (DHCP)' },
   { value: 'static', label: 'Вручную' },
   { value: 'none', label: 'Не использовать' },
 ];
-
 const IPV6_MODES = [
   { value: 'none', label: 'Не используется' },
   { value: 'auto', label: 'Автоматическая' },
   { value: 'manual', label: 'Вручную' },
 ];
-
 const MAC_MODES = [
   { value: 'default', label: 'По умолчанию' },
   { value: 'custom', label: 'Указать вручную' },
 ];
-
 const AUTH_TYPES = [
   { value: 'none', label: 'Не использовать' },
   { value: 'pppoe', label: 'PPPoE' },
   { value: 'pptp', label: 'PPTP' },
   { value: 'l2tp', label: 'L2TP' },
 ];
-
 const DOT1X_MODES = [
   { value: 'none', label: 'Не использовать' },
   { value: 'eap-md5', label: 'EAP-MD5' },
   { value: 'eap-tls', label: 'EAP-TLS' },
 ];
-
 const PING_MODES = [
   { value: 'none', label: 'Не использовать' },
   { value: 'auto', label: 'Автоматически' },
   { value: 'manual', label: 'Указать адрес' },
 ];
 
-/** Приводит значение из RCI к строке выбора. */
 function optionLabel(options: { value: string; label: string }[], value: string): string {
   const found = options.find((o) => o.value === value);
   return found ? found.label : value || '—';
 }
 
-interface Connection {
+interface EthConn {
   id: string;
   description: string;
   type?: string;
@@ -91,46 +91,23 @@ interface Connection {
   mac?: string;
   mtu?: number;
   dhcp?: boolean;
-  schedule?: string;
-  priority?: string;
-  authType?: string;
+  /** Из какого запроса пришли данные — показывается в деталях. */
+  source: string;
 }
 
-/** Достаёт узел interface из ответа POST show rc (форма отличается между прошивками). */
-function extractRcInterfaces(rc: any): any[] {
-  if (rc == null) return [];
-  const found: any[] = [];
-  const walk = (x: any, depth: number) => {
-    if (!x || typeof x !== 'object' || depth > 6) return;
-    if (x.interface && typeof x.interface === 'object' && !Array.isArray(x.interface)) {
-      found.push(x.interface);
-    }
-    for (const k of Object.keys(x)) {
-      if (k === 'interface' && x[k] && typeof x[k] === 'object' && !Array.isArray(x[k])) {
-        found.push(x[k]);
-      }
-      walk(x[k], depth + 1);
-    }
-  };
-  if (Array.isArray(rc)) rc.forEach((x) => walk(x, 0));
-  else walk(rc, 0);
-
-  const merged: Record<string, any> = {};
-  for (const node of found) {
-    for (const name of Object.keys(node)) {
-      const v = node[name];
-      merged[name] = v && typeof v === 'object' ? { ...(merged[name] ?? {}), ...v } : v;
-    }
+async function settle<T>(p: Promise<T>): Promise<T | null> {
+  try {
+    return await p;
+  } catch {
+    return null;
   }
-  return Object.keys(merged).map((name) => ({ name, ...(typeof merged[name] === 'object' ? merged[name] : {}) }));
 }
 
-function isEthernetInternet(node: any): boolean {
-  const id = String(node?.name ?? node?.id ?? '').toLowerCase();
-  const type = String(node?.type ?? '').toLowerCase();
-  const role = Array.isArray(node?.role) ? node.role.map(String) : node?.role ? [String(node.role)] : [];
-  const inet = role.some((r: string) => r.toLowerCase() === 'inet') || node?.global === true;
-  return inet && !type.includes('wifi') && !type.includes('mobile') && !id.startsWith('wifi');
+/** «1.2.3.4/24» -> адрес и маска по отдельности. */
+function splitAddress(value: unknown): { address?: string; mask?: string } {
+  if (typeof value !== 'string' || !value) return {};
+  const [address, mask] = value.split('/');
+  return { address, mask };
 }
 
 export default function Ethernet() {
@@ -139,71 +116,116 @@ export default function Ethernet() {
   const alert = useAlert();
   const { confirm } = useAlertDialog();
 
-  const ipReq = useApi('eth-ip', () => Api.internetConnections(creds));
-  const ifaceReq = useApi('eth-iface', () => Api.interface(creds));
-  const rcReq = useApi('eth-rc', () => Api.rcInterface(creds));
+  // Оба запроса идут параллельно и не роняют страницу поодиночке: если один
+  // не поддержан прошивкой, данные берутся из второго.
+  const req = useApi('eth-conns', async () => {
+    const [ifaces, ipIface, system] = await Promise.all([
+      settle(Api.interface(creds)),
+      settle(Api.internetConnections(creds)),
+      settle(Api.system(creds)),
+    ]);
+    return { ifaces, ipIface, system };
+  });
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [openVlan, setOpenVlan] = useState(false);
-  const [localOverrides, setLocalOverrides] = useState<Record<string, Partial<Connection>>>({});
+  const [showRaw, setShowRaw] = useState(false);
+  const [overrides, setOverrides] = useState<Record<string, Partial<EthConn>>>({});
 
-  const connections = useMemo<Connection[]>(() => {
-    const rcNodes = extractRcInterfaces(rcReq.data);
-    const rcById = new Map(rcNodes.map((n) => [String(n.name ?? n.id ?? ''), n]));
+  const connections = useMemo<EthConn[]>(() => {
+    const data = req.data as { ifaces: unknown; ipIface: unknown; system: unknown } | null;
+    if (!data) return [];
 
-    const showList = toArray(ipReq.data);
-    const ifaceList = toArray(ifaceReq.data);
+    const byId = new Map<string, EthConn>();
 
-    const merged: Connection[] = [];
-    const seen = new Set<string>();
+    // --- Источник 1: show/interface, интерфейсы с ролью inet ---
+    for (const i of asInterfaces(data.ifaces)) {
+      const inet = hasRole(i, 'inet') || i.global === true;
+      if (!inet) continue;
+      const id = ifaceId(i);
+      if (!id || id === '—') continue;
+      const up = isUp(i);
+      byId.set(id, {
+        id,
+        description: String(i.description || i.name || i['interface-name'] || id),
+        type: i.type ? String(i.type) : undefined,
+        up,
+        enabled: String(i.state ?? '').toLowerCase() !== 'down',
+        mac: i.mac || i.hwaddr ? String(i.mac || i.hwaddr) : undefined,
+        mtu: i.mtu != null ? Number(i.mtu) : undefined,
+        ...splitAddress(i.address),
+        source: 'show/interface',
+      });
+    }
 
-    for (const c of showList) {
-      const id = String(c?.id ?? c?.interface ?? c?.['interface-name'] ?? '');
-      if (!id || seen.has(id)) continue;
-      const rc = rcById.get(id) ?? {};
-      const show = ifaceList.find((i: any) => String(i?.id ?? i?.['interface-name'] ?? '') === id) ?? {};
-      const role = Array.isArray(c?.role) ? c.role.map(String) : c?.role ? [String(c.role)] : [];
-      const looksWifi = String(c?.type ?? '').toLowerCase().includes('wifi') || id.toLowerCase().startsWith('wifi');
-      const isInet = role.some((r: string) => String(r).toLowerCase() === 'inet') || c?.global === true;
-      if (!looksWifi && (isInet || id.toLowerCase().includes('isp') || String(rc?.description ?? ''))) {
-        seen.add(id);
-        merged.push(buildConnection(id, c, show, rc));
+    // --- Источник 2: show/ip/interface ---
+    for (const c of toArray(data.ipIface)) {
+      const id = String(c?.id ?? c?.interface ?? c?.['interface-name'] ?? c?._key ?? '');
+      if (!id || id === 'undefined') continue;
+      const existing = byId.get(id);
+      const parsed = splitAddress(c?.address);
+      if (existing) {
+        // Данные второго источника точнее по IP — дополняем, не перетирая.
+        byId.set(id, {
+          ...existing,
+          address: parsed.address ?? existing.address,
+          mask: c?.mask ? String(c.mask) : parsed.mask ?? existing.mask,
+          gateway: c?.gateway ? String(c.gateway) : existing.gateway,
+          enabled: c?.state !== 'down',
+          up: existing.up || c?.link === 'up' || c?.connected === 'yes',
+          source: 'show/interface + show/ip/interface',
+        });
+      } else {
+        byId.set(id, {
+          id,
+          description: String(c?.description ?? c?.name ?? id),
+          type: c?.type ? String(c.type) : undefined,
+          up: c?.link === 'up' || c?.connected === 'yes',
+          enabled: c?.state !== 'down',
+          mac: c?.mac ? String(c.mac) : undefined,
+          mtu: c?.mtu != null ? Number(c.mtu) : undefined,
+          gateway: c?.gateway ? String(c.gateway) : undefined,
+          ...parsed,
+          source: 'show/ip/interface',
+        });
       }
     }
 
-    // Подключения могут быть только в running-config (например, выключенные).
-    for (const n of rcNodes) {
-      const id = String(n?.name ?? '');
-      if (!id || seen.has(id) || !isEthernetInternet(n)) continue;
-      seen.add(id);
-      merged.push(buildConnection(id, {}, {}, n));
-    }
+    return [...byId.values()];
+  }, [req.data]);
 
-    return merged;
-  }, [ipReq.data, ifaceReq.data, rcReq.data]);
+  const list = connections.map((c) => (overrides[c.id] ? { ...c, ...overrides[c.id] } : c));
+  const selected = list.find((c) => c.id === selectedId) ?? list[0] ?? null;
 
-  const withOverrides = connections.map((c) =>
-    localOverrides[c.id] ? { ...c, ...localOverrides[c.id] } : c,
-  );
+  if (req.loading) return <LoadingState />;
+  if (req.error) return <ErrorState message={req.error} onRetry={req.refetch} />;
 
-  const selected = withOverrides.find((c) => c.id === selectedId) ?? withOverrides[0] ?? null;
+  const raw = req.data as { ifaces: unknown; ipIface: unknown; system: unknown } | null;
 
-  if (ipReq.loading || ifaceReq.loading || rcReq.loading) return <LoadingState />;
-  if (ipReq.error && rcReq.error) return <ErrorState message={ipReq.error} onRetry={ipReq.refetch} />;
-  if (withOverrides.length === 0) {
+  // Пусто только если роутер действительно ничего не отдал — тогда честно
+  // показываем ответ как есть, а не сообщение «не найдено» без объяснений.
+  if (list.length === 0) {
     return (
-      <EmptyState
-        icon="cloud-offline-outline"
-        title="Ethernet-подключение не найдено"
-        subtitle="На роутере не настроено проводное подключение к интернету."
-      />
+      <View style={{ gap: Spacing.md }}>
+        <EmptyState
+          icon="cloud-offline-outline"
+          title="Подключения не найдены"
+          subtitle="Роутер не вернул ни одного интернет-подключения. Ниже — ответ роутера как есть."
+        />
+        <PageCard title="Ответ роутера">
+          <ObjectView data={raw?.ipIface ?? null} maxDepth={4} />
+        </PageCard>
+        <PageCard title="Интерфейсы">
+          <ObjectView data={raw?.ifaces ?? null} maxDepth={3} />
+        </PageCard>
+      </View>
     );
   }
 
-  const apply = (patch: Partial<Connection>) => {
+  const apply = (patch: Partial<EthConn>) => {
     if (!selected) return;
-    setLocalOverrides((prev) => ({ ...prev, [selected.id]: { ...(prev[selected.id] ?? {}), ...patch } }));
+    setOverrides((prev) => ({ ...prev, [selected.id]: { ...(prev[selected.id] ?? {}), ...patch } }));
   };
 
   const runToggle = (next: boolean) => {
@@ -213,13 +235,13 @@ export default function Ethernet() {
       next ? 'Подключение будет включено, настройки сохранятся.' : 'Доступ в интернет через это подключение пропадёт.',
       async () => {
         setBusy(true);
-        const previous = selected.enabled;
+        const before = selected.enabled;
         apply({ enabled: next });
         try {
           await Api.setConnectionUp(creds, selected.id, next);
-          if (ipReq.data) await ipReq.refetch();
+          await req.refetch();
         } catch (e: any) {
-          apply({ enabled: previous });
+          apply({ enabled: before });
           alert.show({ title: 'Не удалось применить', message: e?.message ?? 'Роутер отклонил команду.', actions: [{ text: 'OK' }] });
         } finally {
           setBusy(false);
@@ -229,17 +251,17 @@ export default function Ethernet() {
     );
   };
 
-  const renameProvider = (value: string) => {
-    apply({ description: value });
-  };
-
   const commitRename = async () => {
     if (!selected) return;
+    setBusy(true);
     try {
       await Api.setConnectionDescription(creds, selected.id, selected.description);
-      if (ipReq.data) await ipReq.refetch();
+      await req.refetch();
+      alert.show({ title: 'Имя сохранено', message: 'Новое имя применено на роутере.', actions: [{ text: 'OK' }] });
     } catch (e: any) {
       alert.show({ title: 'Не удалось сохранить имя', message: e?.message ?? 'Роутер отклонил команду.', actions: [{ text: 'OK' }] });
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -247,18 +269,13 @@ export default function Ethernet() {
     if (!selected) return;
     confirm(
       `Удалить «${selected.description}»?`,
-      'Подключение будет удалено с роутера. Это действие нельзя отменить.',
+      'Подключение будет удалено на роутере. Действие нельзя отменить.',
       async () => {
         setBusy(true);
         try {
           await Api.removeConnection(creds, selected.id);
-          setLocalOverrides((prev) => {
-            const next = { ...prev };
-            delete next[selected.id];
-            return next;
-          });
           setSelectedId(null);
-          if (ipReq.data) await ipReq.refetch();
+          await req.refetch();
         } catch (e: any) {
           alert.show({ title: 'Не удалось удалить', message: e?.message ?? 'Роутер отклонил команду.', actions: [{ text: 'OK' }] });
         } finally {
@@ -269,12 +286,7 @@ export default function Ethernet() {
     );
   };
 
-  const pickFrom = (
-    title: string,
-    options: { value: string; label: string }[],
-    current: string,
-    onPick: (v: string) => void,
-  ) => {
+  const pickFrom = (title: string, options: { value: string; label: string }[], onPick: (v: string) => void) => {
     alert.show({
       title,
       options: [
@@ -284,34 +296,8 @@ export default function Ethernet() {
     });
   };
 
-  const addConnection = () => {
-    alert.show({
-      title: 'Новое подключение',
-      message: 'Создать Ethernet-подключение с автоматическими настройками (DHCP)?',
-      actions: [
-        { text: 'Отмена', style: 'cancel' },
-        {
-          text: 'Создать',
-          onPress: async () => {
-            setBusy(true);
-            try {
-              const id = `ISP${withOverrides.length + 1}`;
-              await Api.addEthernetConnection(creds, id);
-              if (ipReq.data) await ipReq.refetch();
-            } catch (e: any) {
-              alert.show({ title: 'Не удалось создать', message: e?.message ?? 'Роутер отклонил команду.', actions: [{ text: 'OK' }] });
-            } finally {
-              setBusy(false);
-            }
-          },
-        },
-      ],
-    });
-  };
-
   return (
     <View style={{ gap: Spacing.sm }}>
-      {/* ── Заголовок страницы ── */}
       <View style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 6 }}>
         <Text style={{ flex: 1, fontFamily: FONT.bold, fontSize: 20, color: colors.text }}>
           Подключения к интернету по Ethernet-кабелю
@@ -325,7 +311,7 @@ export default function Ethernet() {
 
       {/* ── Список подключений ── */}
       <View style={{ flexDirection: 'row', alignItems: 'flex-end', marginTop: Spacing.xs, flexWrap: 'wrap' }}>
-        {withOverrides.map((c) => {
+        {list.map((c) => {
           const active = selected?.id === c.id;
           return (
             <Pressable
@@ -355,15 +341,11 @@ export default function Ethernet() {
             </Pressable>
           );
         })}
-        <Pressable onPress={addConnection} disabled={busy} hitSlop={10} style={{ padding: 8 }}>
-          <Ionicons name="add" size={20} color={colors.accent} />
-        </Pressable>
       </View>
       <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: colors.divider }} />
 
       {selected ? (
         <>
-          {/* ── Ethernet-подключение: вкл/выкл ── */}
           <FormSectionTitle>Ethernet-подключение</FormSectionTitle>
           <View style={styles.inlineRow}>
             <Switch
@@ -373,12 +355,7 @@ export default function Ethernet() {
               trackColor={{ false: colors.divider, true: colors.accentDim }}
               thumbColor={selected.enabled ? colors.accent : colors.textMuted}
             />
-            <View
-              style={[
-                styles.pill,
-                { backgroundColor: (selected.up ? colors.online : colors.offline) + '22', marginLeft: 10 },
-              ]}
-            >
+            <View style={[styles.pill, { backgroundColor: (selected.up ? colors.online : colors.offline) + '22', marginLeft: 10 }]}>
               <View
                 style={{
                   width: 6,
@@ -387,12 +364,7 @@ export default function Ethernet() {
                   backgroundColor: selected.up ? colors.online : colors.offline,
                 }}
               />
-              <Text
-                style={[
-                  styles.pillText,
-                  { color: selected.up ? colors.online : colors.offline },
-                ]}
-              >
+              <Text style={[styles.pillText, { color: selected.up ? colors.online : colors.offline }]}>
                 {selected.up ? 'Подключено' : selected.enabled ? 'Не подключено' : 'Отключено'}
               </Text>
             </View>
@@ -400,41 +372,52 @@ export default function Ethernet() {
 
           <SelectField
             label="Расписание работы"
-            value={optionLabel(SCHEDULES, selected.schedule ?? 'always')}
-            onPress={() =>
-              pickFrom('Расписание работы', SCHEDULES, selected.schedule ?? 'always', (v) => apply({ schedule: v }))
-            }
+            value={optionLabel(SCHEDULES, 'always')}
+            onPress={() => pickFrom('Расписание работы', SCHEDULES, () => {})}
           />
           <SelectField
             label="Приоритет подключения"
-            value={optionLabel(PRIORITIES, selected.priority ?? 'default')}
-            onPress={() =>
-              pickFrom('Приоритет подключения', PRIORITIES, selected.priority ?? 'default', (v) => apply({ priority: v }))
-            }
+            value={optionLabel(PRIORITIES, 'default')}
+            onPress={() => pickFrom('Приоритет подключения', PRIORITIES, () => {})}
           />
 
           <LabeledInput
             label="Имя провайдера"
             value={selected.description}
-            onChangeText={renameProvider}
+            onChangeText={(v) => apply({ description: v })}
             autoCapitalize="sentences"
           />
           <Text style={{ fontFamily: FONT.regular, fontSize: 11.5, color: colors.textMuted, marginTop: -4, marginBottom: Spacing.sm }}>
             Вы можете назвать это подключение, как вам удобно.
           </Text>
           <View style={{ flexDirection: 'row', gap: Spacing.sm }}>
-            <ActionButton label="Сохранить имя" icon="checkmark-outline" variant="outline" onPress={commitRename} disabled={busy} />
-            <ActionButton label="Удалить подключение" icon="trash-outline" variant="outline" onPress={removeConnection} disabled={busy} />
+            <ActionButton label="Сохранить имя" icon="checkmark-outline" onPress={commitRename} disabled={busy} />
+            <ActionButton label="Удалить" icon="trash-outline" onPress={removeConnection} disabled={busy} />
           </View>
 
-          {/* ── Порты и VLAN'ы ── */}
+          <FormSectionTitle>Параметры подключения</FormSectionTitle>
+          <PageCard title="Получено от роутера">
+            <ObjectView
+              data={{
+                'Идентификатор': selected.id,
+                'IP-адрес': selected.address ?? '—',
+                'Маска': selected.mask ?? '—',
+                'Шлюз': selected.gateway ?? '—',
+                'MAC-адрес': selected.mac ?? '—',
+                'MTU': selected.mtu != null ? String(selected.mtu) : '—',
+                'Тип': selected.type ?? '—',
+                'Источник данных': selected.source,
+              }}
+              maxDepth={1}
+            />
+          </PageCard>
+
           <FormSectionTitle>Порты и VLAN'ы</FormSectionTitle>
           <Text style={{ fontFamily: FONT.regular, fontSize: 12.5, lineHeight: 18, color: colors.textSecondary }}>
-            Если провайдер выдал вам номера VLAN для подключения к интернету, IP-телевидению или IP-телефонии, введите их
-            в соответствующих полях и выберите порты для подключения приставки IPTV и IP-телефона.
+            Если провайдер выдал номера VLAN для подключения к интернету, IP-телевидению или IP-телефонии, введите их
+            в соответствующих полях и выберите порты для приставки IPTV и IP-телефона.
           </Text>
-          <PortsRow selectedPort={selected.type ? undefined : undefined} />
-
+          <PortsRow />
           <Pressable onPress={() => { haptic(); setOpenVlan((v) => !v); }} style={styles.linkRow}>
             <Text style={{ fontFamily: FONT.medium, fontSize: 13, color: colors.accent }}>
               VLAN для интернета, IP-телефонии и IP-телевидения
@@ -449,7 +432,6 @@ export default function Ethernet() {
             </View>
           ) : null}
 
-          {/* ── Параметры IPv4 ── */}
           <FormSectionTitle>Параметры IPv4</FormSectionTitle>
           {selected.address ? (
             <View style={[styles.pill, { backgroundColor: colors.online + '22', alignSelf: 'flex-start' }]}>
@@ -460,27 +442,23 @@ export default function Ethernet() {
           <SelectField
             label="Настройка IPv4"
             value={optionLabel(IPV4_MODES, selected.dhcp === false ? 'static' : 'dhcp')}
-            onPress={() => pickFrom('Настройка IPv4', IPV4_MODES, 'dhcp', () => {})}
+            onPress={() => pickFrom('Настройка IPv4', IPV4_MODES, () => {})}
           />
-          <LabeledInput label="IPv4 DNS 1" value="" placeholder="Не задан" editable={false} />
           <CheckboxRow label="Игнорировать DNSv4 интернет-провайдера" checked={false} disabled />
 
-          {/* ── Параметры IPv6 ── */}
           <FormSectionTitle>Параметры IPv6</FormSectionTitle>
           <SelectField
             label="Настройка IPv6"
             value={optionLabel(IPV6_MODES, 'none')}
-            onPress={() => pickFrom('Настройка IPv6', IPV6_MODES, 'none', () => {})}
+            onPress={() => pickFrom('Настройка IPv6', IPV6_MODES, () => {})}
           />
 
-          {/* ── Требования провайдера ── */}
           <FormSectionTitle>Требования провайдера</FormSectionTitle>
           <SelectField
             label="MAC-адрес"
             value={optionLabel(MAC_MODES, 'default')}
-            onPress={() => pickFrom('MAC-адрес', MAC_MODES, 'default', () => {})}
+            onPress={() => pickFrom('MAC-адрес', MAC_MODES, () => {})}
           />
-          <LabeledInput label="Имя устройства" value="" placeholder="Не задано" editable={false} />
           <LabeledInput
             label="Размер MTU"
             value={selected.mtu != null ? String(selected.mtu) : '1500'}
@@ -488,72 +466,58 @@ export default function Ethernet() {
             keyboardType="numeric"
           />
 
-          {/* ── Аутентификация у провайдера ── */}
           <FormSectionTitle>Аутентификация у провайдера (PPPoE / PPTP / L2TP)</FormSectionTitle>
           <SelectField
             label="Тип (протокол)"
-            value={optionLabel(AUTH_TYPES, selected.authType ?? 'none')}
-            onPress={() => pickFrom('Тип (протокол)', AUTH_TYPES, 'none', (v) => apply({ authType: v }))}
+            value={optionLabel(AUTH_TYPES, 'none')}
+            onPress={() => pickFrom('Тип (протокол)', AUTH_TYPES, () => {})}
           />
 
-          {/* ── 802.1x ── */}
           <FormSectionTitle>Проверка подлинности по стандарту 802.1x</FormSectionTitle>
           <SelectField
             label="Метод проверки подлинности"
             value={optionLabel(DOT1X_MODES, 'none')}
-            onPress={() => pickFrom('Метод проверки подлинности', DOT1X_MODES, 'none', () => {})}
+            onPress={() => pickFrom('Метод проверки подлинности', DOT1X_MODES, () => {})}
           />
 
-          {/* ── Ping Check ── */}
           <FormSectionTitle>Проверка доступности интернета (Ping Check)</FormSectionTitle>
           <SelectField
             label="Режим"
             value={optionLabel(PING_MODES, 'none')}
-            onPress={() => pickFrom('Режим', PING_MODES, 'none', () => {})}
+            onPress={() => pickFrom('Режим', PING_MODES, () => {})}
           />
 
-          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 6, marginTop: Spacing.md }}>
-            <Ionicons name="lock-closed-outline" size={12} color={colors.textMuted} />
-            <Text style={{ fontFamily: FONT.regular, fontSize: 11, color: colors.textMuted, textAlign: 'center' }}>
-              Часть полей доступна только на самом роутере
+          {/* ── Сырые данные: видно ровно то, что ответил роутер ── */}
+          <Pressable onPress={() => { haptic(); setShowRaw((v) => !v); }} style={styles.linkRow}>
+            <Ionicons name={showRaw ? 'chevron-up' : 'chevron-down'} size={16} color={colors.textMuted} />
+            <Text style={{ fontFamily: FONT.medium, fontSize: 13, color: colors.textSecondary, marginLeft: 6 }}>
+              Данные с роутера
             </Text>
-          </View>
+          </Pressable>
+          {showRaw ? (
+            <>
+              <PageCard title="show /ip/interface">
+                <ObjectView data={raw?.ipIface ?? null} maxDepth={4} />
+              </PageCard>
+              <PageCard title="show /interface">
+                <ObjectView data={raw?.ifaces ?? null} maxDepth={3} />
+              </PageCard>
+            </>
+          ) : null}
         </>
       ) : null}
     </View>
   );
 }
 
-/** Строит запись подключения из трёх источников RCI. */
-function buildConnection(id: string, show: any, iface: any, rc: any): Connection {
-  const address = show?.address ?? rc?.address ?? iface?.address;
-  return {
-    id,
-    description: String(rc?.description ?? show?.description ?? id),
-    type: String(show?.type ?? iface?.type ?? ''),
-    up: show?.link === 'up' || show?.connected === 'yes' || iface?.link === 'up',
-    enabled: show?.state !== 'down' && rc?.down !== true,
-    address: address ? String(address) : undefined,
-    mask: show?.mask ? String(show.mask) : undefined,
-    gateway: show?.gateway ? String(show.gateway) : undefined,
-    mac: show?.mac ? String(show.mac) : undefined,
-    mtu: show?.mtu != null ? Number(show.mtu) : undefined,
-    dhcp: rc?.address === 'dhcp' || String(rc?.address ?? '').toLowerCase() === 'dhcp',
-    schedule: rc?.schedule ? String(rc.schedule) : undefined,
-    priority: rc?.priority ? String(rc.priority) : undefined,
-    authType: rc?.ppp ? String(rc.ppp) : undefined,
-  };
-}
-
-/** Ряд портов Ethernet, как в веб-интерфейсе (с нумерацией и слотом SFP). */
-function PortsRow({ selectedPort }: { selectedPort?: string }) {
+/** Ряд портов Ethernet с нумерацией и слотом SFP. */
+function PortsRow() {
   const { colors, haptic } = useSettings();
   const [picked, setPicked] = useState<string | null>(null);
-  const ports = ['0', '1', '2', '3', '4'];
 
   return (
     <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: Spacing.xs }}>
-      {ports.map((p) => {
+      {['0', '1', '2', '3', '4'].map((p) => {
         const active = picked === p;
         return (
           <Pressable
@@ -564,10 +528,7 @@ function PortsRow({ selectedPort }: { selectedPort?: string }) {
             }}
             style={[
               styles.port,
-              {
-                backgroundColor: active ? colors.accent : colors.card,
-                borderColor: active ? colors.accent : colors.border,
-              },
+              { backgroundColor: active ? colors.accent : colors.card, borderColor: active ? colors.accent : colors.border },
             ]}
           >
             <Ionicons name="git-network-outline" size={18} color={active ? '#FFFFFF' : colors.textSecondary} />

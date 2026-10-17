@@ -1,29 +1,42 @@
 import { useEffect, useRef, useState } from 'react';
-import { Animated, Easing, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  Animated,
+  Easing,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from 'react-native';
 import { BlurView } from 'expo-blur';
 import * as Clipboard from 'expo-clipboard';
 import { useSettings } from '../context/SettingsContext';
 import { FONT, Radius } from '../theme/colors';
 
-const ANIM_MS = 260;
+const ANIM_MS = 280;
+
+/** Сколько раз прогонять текст через размытие: чем больше, тем нечитаемее. */
+const BLUR_LAYERS = 3;
+const BLUR_INTENSITY = 34;
 
 interface HiddenValueProps {
   value: string;
-  /** Подпись под скрытым значением (например, «Нажмите, чтобы показать»). */
+  /** Подпись под скрытым значением. */
   hint?: string;
 }
 
 /**
- * Значение, скрытое анимированным блюром.
+ * Значение, скрытое размытием.
  *
- * - по умолчанию значение размыто и нечитаемо;
- * - касание — блюр плавно исчезает, значение проявляется; повторное касание
- *   возвращает блюр;
- * - долгое нажатие — значение копируется в буфер обмена.
+ * Секрет рисуется трижды друг поверх друга: каждый слой размыт всё сильнее, а
+ * сверху лежит лёгкая матовая плёнка. Одно размытие на Android часто не
+ * скрывает короткий текст (буквы угадываются), поэтому слои накладываются:
+ * после третьего прохода от букв остаётся ровное пятно, а не «звёздочки».
  *
- * На Android настоящий блюр есть не на всех прошивках, поэтому поверх него
- * всегда лежит полупрозрачная подложка: даже без размытия прочитать адрес
- * невозможно.
+ * Поверх размытия ничего не рисуется — только сама размытая плёнка, поэтому
+ * никаких точек и символов, по которым можно было бы угадать содержимое.
+ *
+ * Касание — плёнка уезжает, значение проявляется. Долгое нажатие — копирует.
  */
 export function HiddenValue({ value, hint }: HiddenValueProps) {
   const { colors, haptic } = useSettings();
@@ -63,7 +76,8 @@ export function HiddenValue({ value, hint }: HiddenValueProps) {
     copyTimer.current = setTimeout(() => setCopied(false), 1200);
   };
 
-  const scale = veil.interpolate({ inputRange: [0, 1], outputRange: [1.02, 1] });
+  // Плёнка при проявлении чуть увеличивается — так уход читается как движение.
+  const veilScale = veil.interpolate({ inputRange: [0, 1], outputRange: [1.03, 1] });
 
   return (
     <Pressable
@@ -77,9 +91,24 @@ export function HiddenValue({ value, hint }: HiddenValueProps) {
       accessibilityHint="Долгое нажатие копирует адрес"
     >
       <View style={styles.stack}>
-        {/* Настоящее значение — всегда на месте, поверх него лежит блюр. */}
+        {/* Само значение — всегда на месте. Пока оно скрыто, его собственный
+            текст смягчается (крупная тень + пониженная плотность): даже если
+            размытие на устройстве не поддержано, буквы выглядят смазанными,
+            а не чёткими. */}
         <Text
-          style={[styles.value, { color: copied ? colors.online : colors.text }]}
+          style={[
+            styles.value,
+            { color: copied ? colors.online : colors.text },
+            revealed
+              ? null
+              : {
+                  color: copied ? colors.online : colors.textSecondary,
+                  opacity: 0.75,
+                  textShadowColor: colors.text,
+                  textShadowRadius: 16,
+                  textShadowOffset: { width: 0, height: 0 },
+                },
+          ]}
           numberOfLines={1}
           ellipsizeMode="middle"
         >
@@ -88,19 +117,27 @@ export function HiddenValue({ value, hint }: HiddenValueProps) {
 
         <Animated.View
           pointerEvents="none"
-          style={[styles.veil, { opacity: veil, transform: [{ scale }] }]}
+          style={[styles.veil, { opacity: veil, transform: [{ scaleX: veilScale }] }]}
         >
-          <BlurView
-            intensity={Platform.OS === 'android' ? 60 : 40}
-            tint={colors.bg === '#0A0F14' ? 'dark' : 'light'}
-            experimentalBlurMethod={Platform.OS === 'android' ? 'dimezisBlurView' : undefined}
-            style={StyleSheet.absoluteFill}
+          {/* Слои размытия накрывают текст снизу: каждый следующий размывает
+              результат предыдущего, поэтому буквы пропадают полностью. */}
+          {Array.from({ length: BLUR_LAYERS }).map((_, i) => (
+            <BlurView
+              key={i}
+              intensity={BLUR_INTENSITY - i * 6}
+              tint={colors.bg === '#0A0F14' ? 'dark' : 'light'}
+              experimentalBlurMethod={Platform.OS === 'android' ? 'dimezisBlurView' : undefined}
+              style={StyleSheet.absoluteFill}
+            />
+          ))}
+          {/* Мягкая матовая плёнка добирает остаток: она полупрозрачная, поэтому
+              под ней видно размытое пятно, а не сплошной прямоугольник. */}
+          <View
+            style={[
+              StyleSheet.absoluteFill,
+              { backgroundColor: colors.card, opacity: Platform.OS === 'android' ? 0.62 : 0.3 },
+            ]}
           />
-          {/* Подложка гарантирует нечитаемость даже там, где блюр не поддержан. */}
-          <View style={[StyleSheet.absoluteFill, { backgroundColor: colors.card, opacity: 0.72 }]} />
-          <Text style={[styles.veilText, { color: colors.textSecondary }]} numberOfLines={1}>
-            ••••••••••••••••
-          </Text>
         </Animated.View>
       </View>
 
@@ -121,6 +158,7 @@ const styles = StyleSheet.create({
   stack: {
     justifyContent: 'center',
     minHeight: 22,
+    overflow: 'hidden',
   },
   value: {
     fontFamily: FONT.medium,
@@ -134,14 +172,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     overflow: 'hidden',
     borderRadius: Radius.xs,
-    alignItems: 'flex-start',
     justifyContent: 'center',
-  },
-  veilText: {
-    fontFamily: FONT.semiBold,
-    fontSize: 14,
-    letterSpacing: 1.5,
-    paddingHorizontal: 2,
   },
   hint: {
     fontFamily: FONT.regular,
