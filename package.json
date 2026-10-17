@@ -1,6 +1,6 @@
 {
   "name": "keeneticgigaapp",
-  "version": "1.4.5",
+  "version": "1.5.0",
   "main": "index.ts",
   "dependencies": {
     "@expo-google-fonts/inter": "^0.4.2",

@@ -4,7 +4,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { useSettings } from '../context/SettingsContext';
 import { FONT, Radius } from '../theme/colors';
-import { BlurredText } from './BlurredText';
+import { BlurPanel } from './BlurPanel';
 
 const ANIM_MS = 320;
 
@@ -18,13 +18,10 @@ interface HiddenValueProps {
 /**
  * Адрес роутера, скрытый размытием.
  *
- * Размытие считается на холсте Skia (см. BlurredText): оно не зависит от
- * того, поддерживает ли устройство системное размытие, и выглядит одинаково
- * везде. Раньше использовалось системное размытие, которое на части телефонов
- * вырождалось в серую плашку.
- *
- * Пока адрес скрыт, поверх лежит лишь полупрозрачная вуаль в тон карточки —
- * сквозь неё видно размытое пятно, но прочесть адрес нельзя.
+ * Пока значение скрыто, самого адреса в разметке нет — вместо него панель с
+ * плавающими шариками (см. BlurPanel). Подглядывать нечего, поэтому панель
+ * надёжнее любого размытия: раньше адрес рисовался размытым, и всё ломалось
+ * то на шрифте, то на фильтре размытия.
  *
  * Касание — размытие сходит и адрес проявляется. Долгое нажатие копирует.
  */
@@ -100,18 +97,9 @@ export function HiddenValue({ value, hint, onChangePress }: HiddenValueProps) {
           pointerEvents="none"
           style={[styles.blurLayer, { opacity: blurOpacity, transform: [{ scaleX: blurScale }] }]}
         >
-          <BlurredText
-            color={colors.text}
-            cardColor={colors.card}
-            accent={colors.accent}
-            size={14}
-            height={PANEL_H}
-          >
-            {value}
-          </BlurredText>
-          {/* Лёгкая вуаль в тон карточки: сквозь неё видно размытое пятно,
-              но прочитать адрес нельзя. */}
-          <View style={[StyleSheet.absoluteFill, { backgroundColor: colors.card, opacity: 0.28 }]} />
+          {/* Панель без адреса внутри: пока значение скрыто, рисовать нечего,
+              поэтому подглядывать нечего. */}
+          <BlurPanel cardColor={colors.card} accent={colors.accent} height={PANEL_H} />
           {/* Замочек по центру панели: подсказывает, что значение скрыто. */}
           <View style={styles.centerIcon} pointerEvents="none">
             <Ionicons name="lock-closed" size={15} color={colors.text} style={{ opacity: 0.75 }} />
