@@ -2,7 +2,7 @@
   "expo": {
     "name": "Keenetic Giga",
     "slug": "KeeneticGigaApp",
-    "version": "1.7.0",
+    "version": "1.8.0",
     "orientation": "portrait",
     "icon": "./assets/main_icon.png",
     "userInterfaceStyle": "dark",
@@ -35,6 +35,13 @@
         }
       ],
       "expo-system-ui",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Камера нужна, чтобы считать QR-код с экрана компьютера и войти в роутер.",
+          "recordAudioAndroid": false
+        }
+      ],
       "./plugins/withInstallPackages"
     ]
   }
