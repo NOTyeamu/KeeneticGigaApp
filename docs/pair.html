@@ -5,70 +5,117 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Вход в роутер — связка с телефоном</title>
 <style>
-  :root { --bg:#0A0F14; --card:#111A22; --text:#E6F1F8; --muted:#7B9AB0; --accent:#00B4FF; --danger:#FF5C5C; --ok:#34D399; }
+  :root { --bg:#0A0F14; --card:#111A22; --text:#E6F1F8; --muted:#7B9AB0; --accent:#00B4FF;
+          --danger:#FF5C5C; --ok:#34D399; --line:#1B2C3A; }
   * { box-sizing: border-box; }
   body { margin:0; background:var(--bg); color:var(--text); font-family:'Segoe UI',Roboto,system-ui,sans-serif;
-         min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px; }
-  .card { width:100%; max-width:560px; background:var(--card); border:1px solid #1B2C3A; border-radius:20px; padding:24px; }
-  h1 { font-size:20px; margin:0 0 6px; font-weight:600; }
-  .sub { font-size:13px; color:var(--muted); margin:0 0 20px; line-height:1.55; }
+         min-height:100vh; display:flex; align-items:center; justify-content:center; padding:20px; }
 
-  .qrbox { display:flex; justify-content:center; padding:14px; background:#fff; border-radius:16px; }
-  .qrbox svg { display:block; width:100%; height:auto; max-width:320px; }
+  .card { width:100%; max-width:660px; background:var(--card); border:1px solid var(--line);
+          border-radius:20px; padding:22px; }
+  h1 { font-size:19px; margin:0 0 4px; font-weight:600; }
+  .sub { font-size:12.5px; color:var(--muted); margin:0 0 18px; line-height:1.5; }
 
-  .steps { font-size:13px; color:var(--muted); line-height:1.75; margin:18px 0 0; padding-left:20px; }
-  .steps b { color:var(--text); }
+  /* QR слева, пояснения справа: так страница занимает вдвое меньше высоты. */
+  .grid { display:flex; gap:20px; align-items:flex-start; }
+  .qrcol { flex:0 0 236px; display:flex; flex-direction:column; gap:10px; }
+  .sidecol { flex:1; min-width:0; display:flex; flex-direction:column; gap:10px; }
 
-  .btn { width:100%; height:46px; border:0; border-radius:14px; font-size:15px; font-weight:600;
-         cursor:pointer; margin-top:12px; transition:opacity .15s; }
-  .btn:disabled { opacity:.5; cursor:default; }
+  /* Белая рамка вокруг кода. Ширина по содержимому — иначе по бокам
+     остаются широкие белые полосы до края карточки. */
+  .qrbox { background:#fff; border-radius:14px; padding:10px; line-height:0; }
+  .qrbox svg { display:block; width:100%; height:auto; }
+
+  .timer { display:flex; flex-direction:column; gap:5px; }
+  .timerbar { height:4px; border-radius:2px; background:var(--line); overflow:hidden; }
+  .timerfill { height:100%; width:100%; background:var(--ok); border-radius:2px;
+               transition:width .2s linear, background-color .3s; }
+  .timerfill.warn { background:#F5A623; }
+  .timerfill.low { background:var(--danger); }
+  .timertext { font-size:11px; color:var(--muted); text-align:center; }
+
+  .btn { width:100%; height:42px; border:0; border-radius:12px; font-size:14px; font-weight:600;
+         cursor:pointer; transition:opacity .15s; display:flex; align-items:center; justify-content:center; gap:7px; }
+  .btn:disabled { opacity:.45; cursor:default; }
   .btn.primary { background:var(--accent); color:#fff; }
-  .btn.ghost { background:transparent; color:var(--text); border:1px solid #1B2C3A; }
+  .btn.ghost { background:transparent; color:var(--text); border:1px solid var(--line); }
+  .btn.small { height:36px; font-size:12.5px; font-weight:500; }
 
-  .status { font-size:13px; color:var(--muted); margin-top:14px; line-height:1.55; min-height:20px; display:flex; align-items:center; gap:9px; }
-  .status.ok { color:var(--ok); }
-  .status.err { color:var(--danger); }
+  .steps { font-size:12.5px; color:var(--muted); line-height:1.65; margin:0; padding-left:18px; }
+  .steps b { color:var(--text); font-weight:600; }
 
-  .spinner { width:13px; height:13px; border:2px solid rgba(255,255,255,.22); border-top-color:var(--accent);
-             border-radius:50%; animation:spin .8s linear infinite; flex:none; }
-  @keyframes spin { to { transform:rotate(360deg); } }
-
-  .warn { background:rgba(255,92,92,.08); border:1px solid rgba(255,92,92,.32); border-radius:14px;
-          padding:14px; margin-top:16px; font-size:12.5px; line-height:1.6; color:#FFB4B4; }
-
-  .pipe { display:flex; align-items:center; gap:10px; margin-top:16px; font-size:12px; color:var(--muted); }
+  .pipe { display:flex; align-items:center; gap:9px; font-size:12px; color:var(--muted); }
   .dot { width:8px; height:8px; border-radius:50%; background:#374B5C; flex:none; }
   .dot.on { background:var(--ok); box-shadow:0 0 8px rgba(52,211,153,.7); }
   .dot.warn { background:var(--accent); box-shadow:0 0 8px rgba(0,180,255,.7); }
+
+  .status { font-size:12.5px; color:var(--muted); margin:14px 0 0; line-height:1.5; min-height:18px; }
+  .status.ok { color:var(--ok); }
+  .status.err { color:var(--danger); }
+
+  .warn { background:rgba(255,92,92,.07); border:1px solid rgba(255,92,92,.28); border-radius:12px;
+          padding:11px 13px; margin-top:14px; font-size:12px; line-height:1.55; color:#FFB4B4; }
+  .warn b { color:#FFD9D9; }
+
+  /* Увеличенный код на весь экран — когда камера не берёт мелкий. */
+  .zoom { position:fixed; inset:0; background:rgba(6,10,14,.97); z-index:50;
+          display:flex; flex-direction:column; align-items:center; justify-content:center; gap:18px; padding:20px; }
+  .zoom[hidden] { display:none; }
+  .zoom .qrbox { width:min(78vmin, 520px); padding:14px; }
+  .zoom .hint { font-size:13px; color:var(--muted); }
+
+  @media (max-width:560px) {
+    .grid { flex-direction:column; }
+    .qrcol { flex:none; width:100%; max-width:280px; align-self:center; }
+  }
 </style>
 </head>
 <body>
 <div class="card">
   <h1>Вход в роутер с телефона</h1>
-  <p class="sub">Откройте приложение на телефоне, отсканируйте код ниже — данные роутера придут сюда, и вход выполнится сам.</p>
+  <p class="sub">Отсканируйте код телефоном — данные роутера придут сюда, и вход выполнится сам.</p>
 
-  <div class="qrbox" id="qrbox"></div>
+  <div class="grid">
+    <div class="qrcol">
+      <div class="qrbox" id="qrbox"></div>
+      <div class="timer">
+        <div class="timerbar"><div class="timerfill" id="timerFill"></div></div>
+        <div class="timertext" id="timerText">Готовим код…</div>
+      </div>
+      <button class="btn ghost small" id="zoomBtn">Увеличить код</button>
+    </div>
 
-  <div class="pipe">
-    <span class="dot" id="pipeDot"></span>
-    <span id="pipeText">Готовим канал связи…</span>
+    <div class="sidecol">
+      <div class="pipe">
+        <span class="dot" id="pipeDot"></span>
+        <span id="pipeText">Готовим канал связи…</span>
+      </div>
+
+      <ol class="steps">
+        <li>В приложении на телефоне: <b>Настройки → Вход с компьютера</b>.</li>
+        <li>Нажмите <b>«Сканировать QR»</b> и наведите камеру на код слева.</li>
+        <li>Данные придут сюда — откроется роутер с автоматическим входом.</li>
+      </ol>
+
+      <button class="btn primary" id="openBtn" disabled>Открыть роутер</button>
+      <button class="btn ghost small" id="refreshBtn">Обновить код</button>
+      <button class="btn ghost small" id="scriptBtn">Скачать скрипт для Tampermonkey</button>
+      <button class="btn ghost small" id="copyScriptBtn">Скопировать адрес скрипта</button>
+    </div>
   </div>
 
-  <ol class="steps">
-    <li>В приложении: <b>Настройки → Вход с компьютера</b>.</li>
-    <li>Нажмите <b>«Сканировать код»</b> и наведите камеру телефона на код выше.</li>
-    <li>Данные придут сюда, и откроется страница роутера с автоматическим входом.</li>
-  </ol>
-
-  <button class="btn primary" id="openBtn" disabled>Открыть роутер</button>
-  <button class="btn ghost" id="scriptBtn">Скачать скрипт для Tampermonkey</button>
-
-  <div class="warn" id="extWarn">
+  <div class="warn">
     Автоматический вход выполняет расширение <b>Tampermonkey</b> со скриптом.
     Без него страница роутера откроется, но данные в неё не передадутся — пароль придётся ввести вручную.
   </div>
 
   <p class="status" id="status"></p>
+</div>
+
+<div class="zoom" id="zoom" hidden>
+  <div class="qrbox" id="qrboxBig"></div>
+  <div class="hint">Наведите камеру телефона на код</div>
+  <button class="btn ghost small" id="zoomClose" style="max-width:200px">Закрыть</button>
 </div>
 
 <script src="vendor/qrcode.js"></script>
@@ -78,33 +125,52 @@
 //
 // QR-код показывает компьютер, а не телефон: страница роутера
 // открывается по обычному http:// на локальном адресе, это НЕ
-// защищённый контекст, и браузер не даёт ей доступ к камере. Камера
-// есть только у телефона, поэтому код показывает компьютер, а телефон
-// его читает и отправляет данные обратно.
+// защищённый контекст, и браузер не даёт ей доступ к камере.
+// Камера есть только у телефона, поэтому код показывает компьютер,
+// телефон его читает и отправляет данные обратно.
 //
 // Обратный канал — публичная очередь ntfy.sh: компьютер подписывается
 // на случайную тему, телефон публикует в неё одно сообщение. Содержимое
 // зашифровано AES-GCM ключом, который лежит только в QR-коде, поэтому
-// посредник видит лишь нечитаемые байты; сообщение помечается как
-// некэшируемое и на сервере не остаётся.
+// посредник видит лишь нечитаемые байты, а само сообщение помечается
+// некэшируемым и на сервере не остаётся.
+//
+// Код живёт ограниченное время и обновляется сам. Ключ к этому — сеанс:
+// новому коду соответствует новая тема и новый ключ. Прежний сеанс
+// закрывается не сразу, а с запасом: телефон мог считать старый код
+// за миг до обновления, и его сообщение должно найти слушателя.
 // ─────────────────────────────────────────────────────────────
 
 const SCRIPT_URL = 'keenetic-pair.user.js';
+const SCRIPT_FULL_URL = 'https://notyeamu.github.io/KeeneticGigaApp/keenetic-pair.user.js';
 const MSG_TYPE = 'keenetic-giga-pair';
 const TOPIC_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789';
 
-const el = (id) => document.getElementById(id);
-const qrbox = el('qrbox'), status = el('status'), pipeDot = el('pipeDot'), pipeText = el('pipeText');
+/** Сколько живёт один код. */
+const ROTATE_MS = 120000;
+/** Сколько после этого слушаем ещё, на случай позднего сообщения. */
+const GRACE_MS = 120000;
 
-let ticket = null;      // {topic, key} — то, что лежит в QR-коде
-let pair = null;        // расшифрованные данные роутера
+const el = (id) => document.getElementById(id);
+const qrbox = el('qrbox'), qrboxBig = el('qrboxBig');
+const status = el('status'), pipeDot = el('pipeDot'), pipeText = el('pipeText');
+const timerFill = el('timerFill'), timerText = el('timerText');
+const zoom = el('zoom');
+
+/** Активные сеансы: текущий и, на время запаса, предыдущий. */
+let sessions = [];
+let current = null;
+let svgCache = '';
+let pair = null;
 let routerWindow = null;
-let stream = null;
+/** Момент последнего обновления кода — чтобы показать подсказку. */
+let rotatedAt = 0;
+/** Идентификатор отсчёта — снимается, когда данные уже получены. */
+let timerId = null;
 
 function setStatus(text, kind) {
   status.textContent = text || '';
   status.className = 'status' + (kind ? ' ' + kind : '');
-  if (kind === 'ok') { status.insertAdjacentHTML('afterbegin', '<span>✓</span>'); }
 }
 
 function setPipe(text, kind) {
@@ -121,88 +187,179 @@ function b64urlToBytes(s) {
   return out;
 }
 
-// ── Создание сеанса ──────────────────────────────────────────
-function randomBytes(n) {
-  return crypto.getRandomValues(new Uint8Array(n));
-}
-
 function bytesToB64url(bytes) {
   let bin = '';
   for (const b of bytes) bin += String.fromCharCode(b);
   return btoa(bin).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
-function createSession() {
+function randomBytes(n) {
+  return crypto.getRandomValues(new Uint8Array(n));
+}
+
+/** Новый сеанс: своя тема и свой ключ. */
+function createTicket() {
   const t = randomBytes(16);
   let topic = 'kgp-';
   for (const b of t) topic += TOPIC_ALPHABET[b % TOPIC_ALPHABET.length];
   return { topic, key: bytesToB64url(randomBytes(32)) };
 }
 
-function renderQr(value) {
+function renderQr(ticket) {
   const qr = qrcode(0, 'M');
-  qr.addData(value);
+  qr.addData(JSON.stringify({ v: 1, topic: ticket.topic, key: ticket.key }));
   qr.make();
-  // createSvgTag рисует без внешних зависимостей: страница трогает пароль
-  // роутера, и подключать ради картинки чужой CDN не хочется.
-  //
-  // Поле вокруг кода обязательно: без него камера телефона часто не находит
-  // код, потому что ему не хватает светлой рамки. Белая подложка контейнера
-  // для этого не годится — она снаружи SVG, а поле должно быть внутри.
-  //
-  // `margin` здесь задаётся в пикселях, а не в модулях: 4 модуля при
-  // cellSize 6 — это 24. Явное число надёжнее: если cellSize поменяют,
-  // поле не «съедет» вместе с ним незаметно.
-  qrbox.innerHTML = qr.createSvgTag({ cellSize: 6, margin: 24, scalable: true });
+
+  // `margin` у этой библиотеки считается в пикселях, а не в модулях:
+  // 4 модуля при cellSize 6 — это 24. Поле обязательно, без него камера
+  // телефона часто не находит код.
+  svgCache = qr.createSvgTag({ cellSize: 6, margin: 24, scalable: true });
+  qrbox.innerHTML = svgCache;
+  qrboxBig.innerHTML = svgCache;
 }
 
 // ── Приём данных ─────────────────────────────────────────────
-async function decrypt(blob) {
+async function decrypt(session, blob) {
   const raw = b64urlToBytes(blob);
   if (raw.length < 12 + 16) throw new Error('Короткое сообщение');
-  const key = await crypto.subtle.importKey('raw', b64urlToBytes(ticket.key), 'AES-GCM', false, ['decrypt']);
+  const key = await crypto.subtle.importKey('raw', b64urlToBytes(session.ticket.key), 'AES-GCM', false, ['decrypt']);
   const plain = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: raw.slice(0, 12) }, key, raw.slice(12));
   return JSON.parse(new TextDecoder().decode(plain));
 }
 
-function subscribe() {
-  // EventSource переподключается сам, поэтому сбрасывать его не нужно.
-  const es = new EventSource('https://ntfy.sh/' + ticket.topic + '/sse');
-
-  es.addEventListener('open', () => setPipe('Канал открыт, ждём телефон…', 'on'));
+function subscribe(session) {
+  const es = new EventSource('https://ntfy.sh/' + session.ticket.topic + '/sse');
+  session.es = es;
 
   es.addEventListener('message', async (ev) => {
+    if (pair) return; // уже приняли
+
     let msg;
     try { msg = JSON.parse(ev.data); } catch { return; }
     if (msg.event !== 'message' || !msg.message) return;
-    if (pair) return; // уже приняли — повтор игнорируем
 
     try {
-      pair = await decrypt(msg.message);
+      const data = await decrypt(session, msg.message);
+      onPaired(data);
     } catch {
-      setStatus('Пришло сообщение, но расшифровать его не удалось.', 'err');
-      return;
+      // Чужой ключ или испорченное сообщение — просто ждём дальше.
     }
+  });
 
-    es.close();
-    setPipe('Данные получены', 'on');
-    setStatus('Данные с телефона получены. Открываем роутер и входим…', 'ok');
-    el('openBtn').disabled = false;
-    openRouter();
+  es.addEventListener('open', () => {
+    if (session !== current) return;
+    setPipe('Канал открыт, ждём телефон…', 'on');
   });
 
   es.addEventListener('error', () => {
-    if (pair) return;
+    if (pair || session !== current) return;
     setPipe('Канал восстанавливается…', 'warn');
   });
 }
 
+function onPaired(data) {
+  if (pair) return;
+  pair = data;
+
+  stopSessions();
+  setPipe('Данные получены', 'on');
+  setStatus('Данные с телефона получены. Открываем роутер и входим…', 'ok');
+  el('openBtn').disabled = false;
+  timerText.textContent = 'Код больше не нужен';
+  timerFill.style.width = '0%';
+
+  openRouter();
+}
+
+// ── Обновление кода ──────────────────────────────────────────
+function startSession() {
+  const now = Date.now();
+  const session = {
+    ticket: createTicket(),
+    expiresAt: now + ROTATE_MS,
+    closeAt: now + ROTATE_MS + GRACE_MS,
+  };
+  sessions.push(session);
+  current = session;
+
+  renderQr(session.ticket);
+  subscribe(session);
+  cleanup();
+  return session;
+}
+
+/** Закрывает сеансы, чей запас истёк. Текущий не трогает. */
+function cleanup() {
+  const now = Date.now();
+  sessions = sessions.filter((s) => {
+    if (s === current) return true;
+    if (now < s.closeAt) return true;
+    try { s.es.close(); } catch { /* уже закрыт */ }
+    return false;
+  });
+}
+
+function rotate(reason) {
+  startSession();
+  rotatedAt = Date.now();
+  setStatus('Код обновлён. Наведите камеру телефона на новый код.', '');
+}
+
+// Отсчёт идёт через setInterval, а не через requestAnimationFrame: rAF
+// браузеры приостанавливают в фоновой вкладке, и тогда код истёк бы, молча
+// продолжая висеть на экране. Интервал работает и без фокуса на странице.
+function tick() {
+  if (pair || !current) return;
+
+  const now = Date.now();
+  const left = current.expiresAt - now;
+
+  // Код обновляется сам, поэтому сканировать мёртвый код не придётся.
+  if (left <= 0) {
+    rotate('auto');
+    cleanup();
+    return;
+  }
+
+  const pct = Math.max(0, Math.min(100, (left / ROTATE_MS) * 100));
+  timerFill.style.width = pct + '%';
+  timerFill.className = 'timerfill' + (pct < 15 ? ' low' : pct < 40 ? ' warn' : '');
+
+  const secs = Math.ceil(left / 1000);
+  const mm = Math.floor(secs / 60);
+  const ss = String(secs % 60).padStart(2, '0');
+  timerText.textContent = `Код обновится через ${mm}:${ss}`;
+
+  // Подсказка об обновлении держится несколько секунд: без неё легко
+  // продолжать наводить камеру на уже недействительный код.
+  if (rotatedAt && now - rotatedAt >= 6000) {
+    if (/обновлён/.test(status.textContent)) setStatus('');
+    rotatedAt = 0;
+  }
+
+  cleanup();
+}
+
+function stopSessions() {
+  for (const s of sessions) {
+    try { s.es.close(); } catch { /* уже закрыт */ }
+  }
+  sessions = [];
+  current = null;
+  if (timerId !== null) {
+    clearInterval(timerId);
+    timerId = null;
+  }
+}
+
 // ── Вход в роутер ────────────────────────────────────────────
-// Окно открываем по клику: иначе браузер сочтёт его всплывающим и заблокирует.
+// Окно открываем сразу после получения данных: браузер считает его
+// всплывающим, если оно открывается не по нажатию, поэтому кнопка
+// «Открыть роутер» остаётся запасным путём, если окно заблокировали.
 function openRouter() {
   if (!pair) return;
-  const url = pair.url || 'http://192.168.0.1/';
-  const authUrl = url.replace(/\/rci\/?$/, '/') || url;
+  const base = pair.url || 'http://192.168.0.1/rci/';
+  const authUrl = base.replace(/\/rci\/?$/, '/') || base;
 
   if (!routerWindow || routerWindow.closed) {
     routerWindow = window.open(authUrl, 'keenetic_router');
@@ -214,8 +371,8 @@ function openRouter() {
     return;
   }
 
-  // Скрипт Tampermonkey слушает страницу роутера асинхронно: сама страница
-  // грузится не мгновенно, поэтому отправляем несколько раз. Повтор безвреден —
+  // Скрипт Tampermonkey слушает страницу роутера, а она грузится не
+  // мгновенно, поэтому отправляем несколько раз. Повтор безвреден —
   // скрипт отзывается только на первое сообщение.
   const payload = { type: MSG_TYPE, login: pair.login, password: pair.password, url: pair.url, sentAt: Date.now() };
   let sent = 0;
@@ -237,18 +394,41 @@ function openRouter() {
     return;
   }
 
-  ticket = createSession();
-  renderQr(JSON.stringify({ v: 1, topic: ticket.topic, key: ticket.key }));
-  setPipe('Канал готов, ждём телефон…');
-  subscribe();
+  setPipe('Готовим канал связи…');
+  startSession();
+  // Сразу обновляем вид, дальше — раз в четверть секунды.
+  tick();
+  timerId = setInterval(tick, 250);
+
+  window.addEventListener('beforeunload', stopSessions);
 })();
 
+// ── Управление ───────────────────────────────────────────────
 el('openBtn').addEventListener('click', openRouter);
+el('refreshBtn').addEventListener('click', () => rotate('manual'));
+
+el('zoomBtn').addEventListener('click', () => {
+  qrboxBig.innerHTML = svgCache;
+  zoom.hidden = false;
+});
+el('zoomClose').addEventListener('click', () => { zoom.hidden = true; });
+zoom.addEventListener('click', (e) => { if (e.target === zoom) zoom.hidden = true; });
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') zoom.hidden = true; });
+
 el('scriptBtn').addEventListener('click', () => {
   const a = document.createElement('a');
   a.href = SCRIPT_URL;
   a.download = 'keenetic-pair.user.js';
   a.click();
+});
+
+el('copyScriptBtn').addEventListener('click', async () => {
+  try {
+    await navigator.clipboard.writeText(SCRIPT_FULL_URL);
+    setStatus('Адрес скрипта скопирован.', 'ok');
+  } catch {
+    setStatus('Браузер не разрешил копирование. Адрес: ' + SCRIPT_FULL_URL, 'err');
+  }
 });
 </script>
 </body>

@@ -1,15 +1,17 @@
 import { useCallback, useRef, useState } from 'react';
-import { ActivityIndicator, Linking, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import * as Clipboard from 'expo-clipboard';
 import { CameraView, useCameraPermissions, type BarcodeScanningResult } from 'expo-camera';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { PageCard } from '../../components/PageParts';
-import { ActionButton } from '../../components/FormParts';
+import { ActionButton, LabeledInput } from '../../components/FormParts';
 import { useAlert } from '../../components/AlertDialog';
 import { useAuth } from '../../context/AuthContext';
 import { useSettings } from '../../context/SettingsContext';
 import { getBaseUrl } from '../../lib/api';
 import { parseTicket, sendToComputer, type PairTicket } from '../../lib/pairing';
+import { downloadScript, SCRIPT_LINK, SCRIPT_FILE_NAME } from '../../lib/script';
 import { FONT, Radius, Spacing } from '../../theme/colors';
 
 /**
@@ -27,26 +29,36 @@ import { FONT, Radius, Spacing } from '../../theme/colors';
  * забирает страница на компьютере. Ключ есть только у двух этих экранов,
  * поэтому посредник видит лишь нечитаемый набор байт.
  *
- * Сам вход на компьютере выполняет скрипт для Tampermonkey: он работает
- * внутри страницы роутера, то есть в её собственном источнике, и поэтому
- * может обратиться к ней с нужными данными.
+ * Вход на компьютере выполняет скрипт для Tampermonkey: он работает внутри
+ * страницы роутера, то есть в её собственном источнике, и поэтому может
+ * обратиться к ней с нужными данными.
  */
 
 /** Страница связки. Открывается на компьютере, не на телефоне. */
 const PAIR_PAGE_URL = 'https://notyeamu.github.io/KeeneticGigaApp/pair.html';
-const SCRIPT_URL = 'https://notyeamu.github.io/KeeneticGigaApp/keenetic-pair.user.js';
 
-type Stage = 'idle' | 'scanning' | 'sending' | 'sent' | 'failed';
+type Stage = 'idle' | 'sending' | 'sent' | 'failed';
 
 export default function PcLogin() {
   const { colors, haptic } = useSettings();
   const { credentials } = useAuth();
   const alert = useAlert();
+  const insets = useSafeAreaInsets();
   const [permission, requestPermission] = useCameraPermissions();
+
   const [stage, setStage] = useState<Stage>('idle');
   const [error, setError] = useState<string | null>(null);
   /** Билет последнего считанного кода — нужен для повторной отправки. */
   const [ticket, setTicket] = useState<PairTicket | null>(null);
+
+  /** Окно камеры поверх экрана: страница остаётся на месте и не «прыгает». */
+  const [scanning, setScanning] = useState(false);
+  /** Свои данные для входа — если нужно отправить не те, что сохранены. */
+  const [custom, setCustom] = useState<{ user: string; pass: string } | null>(null);
+  const [savingScript, setSavingScript] = useState(false);
+
+  const login = custom?.user ?? credentials?.user ?? '';
+  const password = custom?.pass ?? credentials?.pass ?? '';
 
   /**
    * Камера вызывает обработчик много раз в секунду, пока код в кадре.
@@ -57,19 +69,15 @@ export default function PcLogin() {
 
   const send = useCallback(
     async (found: PairTicket) => {
-      if (!credentials) {
-        setError('Нет данных для входа в роутер.');
+      if (!password) {
+        setError('Нет пароля для входа в роутер.');
         setStage('failed');
         return;
       }
       setStage('sending');
       setError(null);
       try {
-        await sendToComputer(found, {
-          url: getBaseUrl(),
-          login: credentials.user,
-          password: credentials.pass,
-        });
+        await sendToComputer(found, { url: getBaseUrl(), login, password });
         haptic(30);
         setStage('sent');
       } catch (e: unknown) {
@@ -77,7 +85,7 @@ export default function PcLogin() {
         setStage('failed');
       }
     },
-    [credentials, haptic],
+    [login, password, haptic],
   );
 
   const onScanned = useCallback(
@@ -91,6 +99,7 @@ export default function PcLogin() {
       busy.current = true;
       haptic(20);
       setTicket(found);
+      setScanning(false);
       void send(found).finally(() => {
         busy.current = false;
       });
@@ -109,15 +118,43 @@ export default function PcLogin() {
         return;
       }
     }
-    setStage('scanning');
+    setScanning(true);
   };
 
-  const retry = () => {
+  /** Скачивает скрипт файлом: ссылку из приложения браузер не перехватит. */
+  const saveScript = async () => {
     haptic();
-    if (ticket) void send(ticket);
+    setSavingScript(true);
+    try {
+      await downloadScript();
+      alert.show({
+        title: 'Скрипт сохранён',
+        message:
+          'Файл лежит там, куда вы его сохранили. Откройте его — Tampermonkey предложит установку.\n\n' +
+          'На компьютере тот же файл можно взять по ссылке:\n' + SCRIPT_LINK,
+        actions: [{ text: 'OK' }],
+      });
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : 'Не удалось сохранить скрипт.';
+      // Отмена выбора папки — не ошибка, о ней достаточно молчания.
+      if (!/отменено/i.test(message)) {
+        alert.show({ title: 'Не удалось сохранить', message, actions: [{ text: 'OK' }] });
+      }
+    } finally {
+      setSavingScript(false);
+    }
   };
 
-  /** Адрес страницы копируем, а не открываем: она нужна на компьютере. */
+  const copyScriptLink = async () => {
+    haptic();
+    await Clipboard.setStringAsync(SCRIPT_LINK);
+    alert.show({
+      title: 'Ссылка скопирована',
+      message: 'Вставьте её в браузер на компьютере — Tampermonkey предложит установить скрипт.',
+      actions: [{ text: 'OK' }],
+    });
+  };
+
   const copyPairLink = async () => {
     haptic();
     await Clipboard.setStringAsync(PAIR_PAGE_URL);
@@ -128,31 +165,28 @@ export default function PcLogin() {
     });
   };
 
+  const editCredentials = () => {
+    haptic();
+    setCustom({ user: login, pass: password });
+  };
+
+  const resetCredentials = () => {
+    haptic();
+    setCustom(null);
+  };
+
   const showHelp = () => {
     haptic();
     alert.show({
       title: 'Как это работает',
       message:
         '1. На компьютере откройте страницу связки — появится QR-код.\n' +
-        '2. Здесь нажмите «Сканировать код» и наведите камеру на код с экрана компьютера.\n' +
+        '2. Здесь нажмите «Сканировать QR» и наведите камеру на код с экрана компьютера.\n' +
         '3. Данные уйдут на компьютер, и роутер там войдёт сам.\n\n' +
-        'Код показывает компьютер, а не телефон: страница роутера открывается по http и браузер не даёт ей доступ к камере.\n\n' +
-        'Данные зашифрованы ключом из самого QR-кода. Ключ есть только у этих двух экранов, поэтому посредник видит лишь нечитаемый набор байт, и тот не сохраняется. Вход на компьютере выполняет скрипт для Tampermonkey — он единственный работает внутри страницы роутера и может войти за вас.',
+        'Код показывает компьютер, а не телефон: страница роутера открывается по http, и браузер не даёт ей доступ к камере.\n\n' +
+        'Данные зашифрованы ключом из самого QR-кода. Ключ есть только у этих двух экранов, поэтому посредник видит лишь нечитаемый набор байт, и тот не сохраняется.\n\n' +
+        'Вход на компьютере выполняет скрипт для Tampermonkey — только он работает внутри страницы роутера и может войти за вас.',
       actions: [{ text: 'Понятно' }],
-    });
-  };
-
-  const showScriptHelp = () => {
-    haptic();
-    alert.show({
-      title: 'Скрипт для Tampermonkey',
-      message:
-        'Автоматический вход на компьютере возможен только со скриптом для Tampermonkey: страница роутера открывается по незащищённому http, и её собственный код войти за вас не может.\n\n' +
-        'Откроется файл скрипта — Tampermonkey предложит его установить. После установки вход будет выполняться сам.',
-      actions: [
-        { text: 'Отмена', style: 'cancel' },
-        { text: 'Открыть', onPress: () => void Linking.openURL(SCRIPT_URL) },
-      ],
     });
   };
 
@@ -167,72 +201,15 @@ export default function PcLogin() {
         </Pressable>
       </View>
 
-      {/* ── Шаг 1: страница на компьютере ── */}
-      <PageCard title="Шаг 1. Откройте страницу на компьютере">
-        <Text style={[styles.body, { color: colors.textSecondary }]}>
-          На компьютере откройте страницу связки — она покажет QR-код.
-        </Text>
+      {/* ── Основное действие ── */}
+      <PageCard>
         <ActionButton
-          label="Скопировать адрес страницы"
-          icon="copy-outline"
+          label={stage === 'sending' ? 'Передаём данные…' : 'Сканировать QR'}
+          icon="qr-code-outline"
           variant="accent"
-          onPress={copyPairLink}
-          style={{ marginTop: Spacing.sm }}
+          disabled={stage === 'sending'}
+          onPress={startScan}
         />
-        <Text style={[styles.link, { color: colors.textMuted }]} selectable>
-          {PAIR_PAGE_URL}
-        </Text>
-        <View style={[styles.note, { backgroundColor: colors.cardAlt, borderColor: colors.border }]}>
-          <Ionicons name="information-circle-outline" size={18} color={colors.accent} />
-          <Text style={[styles.noteText, { color: colors.textSecondary }]}>
-            Открывать её нужно именно на компьютере: данные передаются между двумя устройствами, и если открыть
-            страницу на телефоне, передавать будет некому.
-          </Text>
-        </View>
-      </PageCard>
-
-      {/* ── Шаг 2: сканирование ── */}
-      <PageCard title="Шаг 2. Считайте код с компьютера">
-        {stage === 'scanning' ? (
-          <View style={styles.cameraWrap}>
-            <CameraView
-              style={styles.camera}
-              facing="back"
-              active
-              barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
-              onBarcodeScanned={onScanned}
-            />
-            {/* Рамка наведения: сама камера ничего не рисует. */}
-            <View style={styles.reticle} pointerEvents="none">
-              <View style={[styles.corner, styles.cornerTL]} />
-              <View style={[styles.corner, styles.cornerTR]} />
-              <View style={[styles.corner, styles.cornerBL]} />
-              <View style={[styles.corner, styles.cornerBR]} />
-            </View>
-            <Pressable
-              onPress={() => {
-                haptic();
-                setStage('idle');
-              }}
-              style={styles.stopBtn}
-            >
-              <Ionicons name="close" size={18} color="#FFFFFF" />
-            </Pressable>
-          </View>
-        ) : (
-          <View style={{ gap: Spacing.sm }}>
-            <Text style={[styles.body, { color: colors.textSecondary }]}>
-              Наведите камеру телефона на код в окне на компьютере. Считывание идёт автоматически.
-            </Text>
-            <ActionButton
-              label={stage === 'sending' ? 'Передаём данные…' : 'Сканировать код'}
-              icon="qr-code-outline"
-              variant="accent"
-              disabled={stage === 'sending'}
-              onPress={startScan}
-            />
-          </View>
-        )}
 
         {stage === 'sending' ? (
           <View style={styles.statusRow}>
@@ -240,77 +217,153 @@ export default function PcLogin() {
             <Text style={[styles.statusText, { color: colors.textSecondary }]}>Передаём данные на компьютер…</Text>
           </View>
         ) : null}
-      </PageCard>
 
-      {/* ── Результат передачи ── */}
-      {stage === 'sent' ? (
-        <PageCard title="Данные переданы">
+        {stage === 'sent' ? (
           <View style={[styles.note, { backgroundColor: colors.accentSoft, borderColor: colors.accent }]}>
             <Ionicons name="checkmark-circle" size={18} color={colors.accent} />
             <Text style={[styles.noteText, { color: colors.text }]}>
-              Отправлено. На компьютере окно роутера откроется и вход выполнится сам — если там установлен скрипт
-              для Tampermonkey. Без него страница откроется, но пароль придётся ввести вручную.
+              Отправлено. На компьютере окно роутера войдёт само, если там установлен скрипт.
             </Text>
           </View>
-          <ActionButton
-            label="Отправить ещё раз"
-            icon="refresh-outline"
-            onPress={retry}
-            style={{ marginTop: Spacing.sm }}
-          />
-        </PageCard>
-      ) : null}
+        ) : null}
 
-      {stage === 'failed' && error ? (
-        <PageCard title="Не удалось передать">
+        {stage === 'failed' && error ? (
           <View style={[styles.note, { backgroundColor: colors.cardAlt, borderColor: colors.danger }]}>
             <Ionicons name="alert-circle-outline" size={18} color={colors.danger} />
             <Text style={[styles.noteText, { color: colors.text }]}>{error}</Text>
           </View>
-          {ticket ? (
-            <ActionButton
-              label="Повторить"
-              icon="refresh-outline"
-              onPress={retry}
-              style={{ marginTop: Spacing.sm }}
-            />
-          ) : (
-            <ActionButton
-              label="Сканировать снова"
-              icon="qr-code-outline"
-              onPress={startScan}
-              style={{ marginTop: Spacing.sm }}
-            />
-          )}
-        </PageCard>
-      ) : null}
+        ) : null}
 
-      {/* ── Данные, которые уйдут на компьютер ── */}
-      <PageCard title="Данные для входа">
-        <Row label="Адрес роутера" value={getBaseUrl()} />
-        <Row label="Пароль" value={credentials?.pass ? '••••••••' : '—'} />
+        {stage === 'sent' && ticket ? (
+          <ActionButton
+            label="Отправить ещё раз"
+            icon="refresh-outline"
+            onPress={() => ticket && void send(ticket)}
+            style={{ marginTop: Spacing.sm }}
+          />
+        ) : null}
       </PageCard>
 
-      {/* ── Автоматический вход ── */}
-      <PageCard title="Автоматический вход">
-        <View style={[styles.note, { backgroundColor: colors.cardAlt, borderColor: colors.border }]}>
+      {/* ── Что нужно сделать на компьютере ── */}
+      <PageCard title="На компьютере">
+        <View style={[styles.note, { backgroundColor: colors.cardAlt, borderColor: colors.border, marginTop: 0 }]}>
           <Ionicons name="information-circle-outline" size={18} color={colors.accent} />
           <Text style={[styles.noteText, { color: colors.textSecondary }]}>
-            Чтобы вход на компьютере выполнялся сам, там нужно расширение Tampermonkey и скрипт.
+            Откройте страницу связки на компьютере — она покажет QR-код. На телефоне её открывать не нужно:
+            передавать будет некому.
           </Text>
         </View>
+        <View style={{ flexDirection: 'row', gap: Spacing.sm, marginTop: Spacing.sm }}>
+          <ActionButton label="Копировать адрес" icon="copy-outline" onPress={copyPairLink} style={{ flex: 1 }} />
+        </View>
+        <Text style={[styles.link, { color: colors.textMuted }]} selectable numberOfLines={1}>
+          {PAIR_PAGE_URL.replace('https://', '')}
+        </Text>
+      </PageCard>
+
+      {/* ── Данные для входа ── */}
+      <PageCard
+        title="Данные для входа"
+        action={
+          custom ? (
+            <Pressable onPress={resetCredentials} hitSlop={8}>
+              <Text style={{ fontFamily: FONT.medium, fontSize: 12.5, color: colors.textSecondary }}>Сбросить</Text>
+            </Pressable>
+          ) : (
+            <Pressable onPress={editCredentials} hitSlop={8}>
+              <Text style={{ fontFamily: FONT.medium, fontSize: 12.5, color: colors.accent }}>Изменить</Text>
+            </Pressable>
+          )
+        }
+      >
+        {custom ? (
+          <>
+            <LabeledInput label="Логин" value={custom.user} onChangeText={(v) => setCustom({ ...custom, user: v })} />
+            <LabeledInput
+              label="Пароль"
+              value={custom.pass}
+              onChangeText={(v) => setCustom({ ...custom, pass: v })}
+              secureTextEntry
+            />
+            <Text style={[styles.hint, { color: colors.textMuted }]}>
+              Эти данные отправятся на компьютер вместо сохранённых.
+            </Text>
+          </>
+        ) : (
+          <>
+            <Row label="Адрес роутера" value={getBaseUrl()} />
+            <Row label="Пароль" value={password ? '••••••••' : '—'} />
+            <Text style={[styles.hint, { color: colors.textMuted }]}>
+              Нажмите «Изменить», чтобы отправить другие данные.
+            </Text>
+          </>
+        )}
+      </PageCard>
+
+      {/* ── Скрипт ── */}
+      <PageCard title="Скрипт для Tampermonkey">
+        <Text style={[styles.body, { color: colors.textSecondary }]}>
+          Без него страница роутера откроется, но данные в неё не передадутся.
+        </Text>
         <ActionButton
-          label="Установить скрипт"
+          label={savingScript ? 'Сохраняем…' : 'Скачать скрипт'}
           icon="download-outline"
-          onPress={showScriptHelp}
+          variant="accent"
+          disabled={savingScript}
+          onPress={saveScript}
           style={{ marginTop: Spacing.sm }}
         />
+        <ActionButton
+          label="Скопировать ссылку на скрипт"
+          icon="link-outline"
+          onPress={copyScriptLink}
+          style={{ marginTop: Spacing.sm }}
+        />
+        <Text style={[styles.link, { color: colors.textMuted }]} selectable numberOfLines={1}>
+          {SCRIPT_FILE_NAME}
+        </Text>
       </PageCard>
 
       <Text style={[styles.footer, { color: colors.textMuted }]}>
         Данные зашифрованы ключом из QR-кода. Ключ есть только у телефона и компьютера,{'\n'}
         а само сообщение на сервере не сохраняется.
       </Text>
+
+      {/* ── Окно камеры поверх экрана ── */}
+      <Modal visible={scanning} animationType="slide" onRequestClose={() => setScanning(false)} statusBarTranslucent>
+        <View style={[styles.scanScreen, { backgroundColor: '#000000', paddingTop: insets.top }]}>
+          <CameraView
+            style={StyleSheet.absoluteFill}
+            facing="back"
+            active={scanning}
+            barcodeScannerSettings={{ barcodeTypes: ['qr'] }}
+            onBarcodeScanned={onScanned}
+          />
+
+          {/* Рамка наведения: сама камера ничего не рисует. */}
+          <View style={styles.reticle} pointerEvents="none">
+            <View style={[styles.corner, styles.cornerTL]} />
+            <View style={[styles.corner, styles.cornerTR]} />
+            <View style={[styles.corner, styles.cornerBL]} />
+            <View style={[styles.corner, styles.cornerBR]} />
+          </View>
+
+          <Pressable
+            onPress={() => {
+              haptic();
+              setScanning(false);
+            }}
+            hitSlop={12}
+            style={[styles.closeBtn, { top: insets.top + 12 }]}
+          >
+            <Ionicons name="close" size={22} color="#FFFFFF" />
+          </Pressable>
+
+          <Text style={[styles.scanHint, { paddingBottom: insets.bottom + 40 }]}>
+            Наведите камеру на QR-код в окне на компьютере
+          </Text>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -343,6 +396,12 @@ const styles = StyleSheet.create({
     fontSize: 13,
     lineHeight: 19,
   },
+  hint: {
+    fontFamily: FONT.regular,
+    fontSize: 11.5,
+    lineHeight: 16,
+    marginTop: 4,
+  },
   note: {
     flexDirection: 'row',
     alignItems: 'flex-start',
@@ -366,43 +425,6 @@ const styles = StyleSheet.create({
     marginTop: 8,
     lineHeight: 16,
   },
-  cameraWrap: {
-    borderRadius: Radius.sm,
-    overflow: 'hidden',
-    height: 300,
-    backgroundColor: '#000000',
-  },
-  camera: {
-    flex: 1,
-  },
-  reticle: {
-    position: 'absolute',
-    top: '18%',
-    left: '18%',
-    right: '18%',
-    bottom: '18%',
-  },
-  corner: {
-    position: 'absolute',
-    width: 26,
-    height: 26,
-    borderColor: '#FFFFFF',
-  },
-  cornerTL: { top: 0, left: 0, borderTopWidth: 3, borderLeftWidth: 3, borderTopLeftRadius: 8 },
-  cornerTR: { top: 0, right: 0, borderTopWidth: 3, borderRightWidth: 3, borderTopRightRadius: 8 },
-  cornerBL: { bottom: 0, left: 0, borderBottomWidth: 3, borderLeftWidth: 3, borderBottomLeftRadius: 8 },
-  cornerBR: { bottom: 0, right: 0, borderBottomWidth: 3, borderRightWidth: 3, borderBottomRightRadius: 8 },
-  stopBtn: {
-    position: 'absolute',
-    top: 10,
-    right: 10,
-    width: 34,
-    height: 34,
-    borderRadius: 17,
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: 'rgba(0,0,0,0.55)',
-  },
   statusRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -417,7 +439,48 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 11,
+    paddingVertical: 9,
+  },
+  scanScreen: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  reticle: {
+    position: 'absolute',
+    top: '28%',
+    left: '12%',
+    right: '12%',
+    aspectRatio: 1,
+  },
+  corner: {
+    position: 'absolute',
+    width: 34,
+    height: 34,
+    borderColor: '#FFFFFF',
+  },
+  cornerTL: { top: 0, left: 0, borderTopWidth: 3, borderLeftWidth: 3, borderTopLeftRadius: 10 },
+  cornerTR: { top: 0, right: 0, borderTopWidth: 3, borderRightWidth: 3, borderTopRightRadius: 10 },
+  cornerBL: { bottom: 0, left: 0, borderBottomWidth: 3, borderLeftWidth: 3, borderBottomLeftRadius: 10 },
+  cornerBR: { bottom: 0, right: 0, borderBottomWidth: 3, borderRightWidth: 3, borderBottomRightRadius: 10 },
+  closeBtn: {
+    position: 'absolute',
+    right: 16,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(0,0,0,0.55)',
+  },
+  scanHint: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    textAlign: 'center',
+    fontFamily: FONT.medium,
+    fontSize: 13,
+    color: '#FFFFFF',
   },
   footer: {
     fontFamily: FONT.regular,

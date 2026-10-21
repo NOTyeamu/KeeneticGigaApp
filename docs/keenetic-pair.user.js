@@ -1,14 +1,35 @@
 // ==UserScript==
 // @name         Keenetic Giga — вход с телефона
 // @namespace    https://github.com/NOTyeamu/KeeneticGigaApp
-// @version      2.0.0
+// @version      2.1.0
 // @description  Принимает данные роутера со страницы связки и сам входит в веб-интерфейс Keenetic
 // @author       NOTyeamu
-// @match        http://192.168.*/*
-// @match        http://10.*/*
-// @match        http://172.16.*/*
-// @match        http://172.17.*/*
-// @match        http://my.keenetic.net/*
+// @homepageURL  https://notyeamu.github.io/KeeneticGigaApp/pair.html
+// @supportURL   https://github.com/NOTyeamu/KeeneticGigaApp/issues
+//
+// Домашние адреса роутера перечислены и через @match, и через @include.
+//
+// Это не избыточность, а страховка. В @match подстановка «*» допустима только
+// первым или единственным символом хоста, поэтому шаблон http://192.168.*/*
+// недействителен: Tampermonkey молча его игнорирует, и на странице роутера
+// скрипт просто не запускается — именно с этим и была беда.
+//
+// В @include подстановка допустима в любом месте адреса, но проверить это на
+// живом Tampermonkey я не могу, поэтому самые частые адреса продублированы
+// явными @match — они работают наверняка. Скрипт запускается, если совпало
+// хотя бы одно правило, так что дублирование безвредно.
+// @match        http://192.168.0.1/*
+// @match        http://192.168.1.1/*
+// @match        http://192.168.0.1:*/*
+// @match        http://192.168.1.1:*/*
+// @match        http://10.0.0.1/*
+// @include      http://192.168.*/*
+// @include      http://10.*/*
+// @include      http://172.16.*/*
+// @include      http://172.17.*/*
+// @include      http://172.18.*/*
+// @include      http://172.19.*/*
+// @include      http://my.keenetic.net/*
 // @match        https://*.keenetic.link/*
 // @match        https://*.keenetic.pro/*
 // @match        https://*.keenetic.name/*

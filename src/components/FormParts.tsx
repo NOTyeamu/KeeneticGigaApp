@@ -28,6 +28,7 @@ export function LabeledInput({
   editable = true,
   keyboardType,
   autoCapitalize = 'none',
+  secureTextEntry = false,
 }: {
   label?: string;
   value: string;
@@ -36,6 +37,8 @@ export function LabeledInput({
   editable?: boolean;
   keyboardType?: 'default' | 'numeric' | 'url' | 'number-pad';
   autoCapitalize?: 'none' | 'sentences' | 'words';
+  /** Скрывать вводимые символы — для пароля. */
+  secureTextEntry?: boolean;
 }) {
   const { colors } = useSettings();
   return (
@@ -53,6 +56,7 @@ export function LabeledInput({
           placeholder={placeholder}
           placeholderTextColor={colors.textMuted}
           editable={editable}
+          secureTextEntry={secureTextEntry}
           keyboardType={
             keyboardType === 'url' ? 'url' : keyboardType === 'default' ? 'default' : keyboardType === 'numeric' ? 'numeric' : 'default'
           }
