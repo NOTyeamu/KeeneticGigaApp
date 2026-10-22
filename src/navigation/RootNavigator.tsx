@@ -3,12 +3,13 @@ import { NavigationContainer, DarkTheme, DefaultTheme, type Theme as NavTheme } 
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
 import { LoginScreen } from '../screens/LoginScreen';
+import { LockScreen } from '../screens/LockScreen';
 import { MainTabs } from './MainTabs';
 import { PageProvider } from '../context/PageContext';
 import { AlertProvider } from '../components/AlertDialog';
 
 export function RootNavigator() {
-  const { credentials, ready } = useAuth();
+  const { credentials, ready, locked } = useAuth();
   const { colors, theme } = useSettings();
 
   const navTheme: NavTheme = {
@@ -41,7 +42,15 @@ export function RootNavigator() {
   return (
     <NavigationContainer theme={navTheme}>
       <AlertProvider>
-        {credentials ? (
+        {/*
+          Три состояния, а не два. Экран блокировки стоит отдельной ветвью
+          намеренно: пока сессия заперта, данные пусты, и если бы вместо него
+          монтировались страницы, они получили бы пустые данные и упали —
+          `useCreds()` в такой ситуации бросает исключение.
+        */}
+        {locked ? (
+          <LockScreen />
+        ) : credentials ? (
           <PageProvider>
             <MainTabs />
           </PageProvider>

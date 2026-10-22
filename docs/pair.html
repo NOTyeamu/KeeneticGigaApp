@@ -240,12 +240,16 @@
 const SCRIPT_URL = 'keenetic-pair.user.js';
 const SCRIPT_FULL_URL = 'https://notyeamu.github.io/KeeneticGigaApp/keenetic-pair.user.js';
 const MSG_TYPE = 'keenetic-giga-pair';
+/** Подтверждение от скрипта, что вход в роутер выполнен. */
+const MSG_ACK = 'keenetic-giga-pair-ack';
 const TOPIC_ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789';
 
 /** Сколько живёт один код. */
 const ROTATE_MS = 120000;
 /** Сколько после этого слушаем ещё, на случай позднего сообщения. */
 const GRACE_MS = 120000;
+/** Сколько ждём подтверждения входа, прежде чем закрыть вкладку. */
+const CLOSE_DELAY_MS = 9000;
 
 const el = (id) => document.getElementById(id);
 const qrbox = el('qrbox'), qrboxBig = el('qrboxBig');
@@ -355,7 +359,8 @@ function subscribe(session) {
 
 function onPaired(data) {
   if (pair) return;
-  pair = data;
+  // Токен сеанса: по нему страница потом узнает своё подтверждение входа.
+  pair = { ...data, closeToken: bytesToB64url(randomBytes(12)) };
 
   stopSessions();
   setPipe('Данные получены', 'on');
@@ -365,6 +370,58 @@ function onPaired(data) {
   timerFill.style.width = '0%';
 
   openRouter();
+  scheduleCloseAfterLogin();
+}
+
+/**
+ * Закрывает эту вкладку после того, как роутер принял данные.
+ *
+ * Порядок важен: сначала открывается роутер, потом ждём подтверждение от
+ * скрипта Tampermonkey, что вход выполнен, и только затем закрываемся.
+ * Закрываться сразу нельзя — страница связки исчезла бы вместе с данными,
+ * которые ещё не успели передаться.
+ *
+ * Токен нужен, чтобы не закрыться по чужому сообщению. Источник здесь не
+ * подходит: страница роутера открывается по локальному адресу, который
+ * у всех разный.
+ */
+function scheduleCloseAfterLogin() {
+  if (!pair?.closeToken) return;
+
+  let closed = false;
+  const finish = (how) => {
+    if (closed) return;
+    closed = true;
+    clearTimeout(timer);
+    window.removeEventListener('message', onAck);
+
+    // Браузер закрывает вкладку только если её открыл скрипт. Открытую
+    // вручную вкладку он молча оставит — тогда честно об этом скажем,
+    // а не сделаем вид, что закрыли.
+    window.close();
+    setTimeout(() => {
+      if (!window.closed) {
+        setStatus(
+          how === 'ack'
+            ? 'Роутер открыт, вход выполнен. Эту вкладку можно закрыть.'
+            : 'Роутер открыт. Эту вкладку можно закрыть.',
+          'ok',
+        );
+      }
+    }, 350);
+  };
+
+  const onAck = (event) => {
+    const data = event && event.data;
+    if (!data || data.type !== MSG_ACK) return;
+    if (data.closeToken !== pair.closeToken) return;
+    finish('ack');
+  };
+  window.addEventListener('message', onAck);
+
+  // Если скрипт не установлен, подтверждения не будет. Ждём разумное время
+  // и всё равно закрываемся: данные роутеру уже отправлены.
+  const timer = setTimeout(() => finish('timeout'), CLOSE_DELAY_MS);
 }
 
 // ── Обновление кода ──────────────────────────────────────────
@@ -470,7 +527,15 @@ function openRouter() {
   // Скрипт Tampermonkey слушает страницу роутера, а она грузится не
   // мгновенно, поэтому отправляем несколько раз. Повтор безвреден —
   // скрипт отзывается только на первое сообщение.
-  const payload = { type: MSG_TYPE, login: pair.login, password: pair.password, url: pair.url, sentAt: Date.now() };
+  const payload = {
+    type: MSG_TYPE,
+    login: pair.login,
+    password: pair.password,
+    url: pair.url,
+    // Токен вернётся в подтверждении — по нему узнаем своё сообщение.
+    closeToken: pair.closeToken,
+    sentAt: Date.now(),
+  };
   let sent = 0;
   const timer = setInterval(() => {
     sent++;

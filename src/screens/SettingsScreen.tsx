@@ -11,6 +11,7 @@ import { MANAGEMENT_ITEMS, type SubItem } from '../data/sections';
 import { FONT, Radius, Spacing } from '../theme/colors';
 import { ListButton } from '../components/ListButton';
 import { HiddenValue } from '../components/HiddenValue';
+import { SessionSection } from '../components/SessionSection';
 import { useAlert } from '../components/AlertDialog';
 
 export function SettingsScreen() {
@@ -302,6 +303,9 @@ export function SettingsScreen() {
         </View>
       </View>
 
+      <SectionLabel colors={colors}>Безопасность</SectionLabel>
+      <SessionSection />
+
       <SectionLabel colors={colors}>Обслуживание роутера</SectionLabel>
       <View style={[styles.group, { borderColor: colors.border, backgroundColor: colors.card }]}>
         {MANAGEMENT_ITEMS.map((item, i) => {
@@ -335,7 +339,6 @@ export function SettingsScreen() {
         <ListButton
           title="Сканировать QR"
           icon="qr-code-outline"
-          subtitle="Войти в роутер на компьютере по QR-коду"
           first
           onPress={() => {
             haptic();

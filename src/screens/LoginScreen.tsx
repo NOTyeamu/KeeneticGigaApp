@@ -21,6 +21,7 @@ import * as Clipboard from 'expo-clipboard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
 import { useSettings } from '../context/SettingsContext';
+import { BrandStack } from '../components/BrandStack';
 import {
   Api,
   getBaseUrl,
@@ -181,35 +182,10 @@ export function LoginScreen() {
     >
       <View style={[styles.container, { paddingTop: insets.top + 8, paddingBottom: insets.bottom + 8 }]}>
 
-        {/* ── Brand stack pinned to the very top, with overlap ── */}
-        <View style={styles.brandStack}>
-          <Image
-            source={require('../../assets/keenetic_giga_router_image.png')}
-            style={styles.routerImage}
-            resizeMode="contain"
-          />
-          {/* Brand text image lifted up so it overlaps the bottom of the router image. */}
-          <Image
-            source={require('../../assets/keenetic_giga_text_image.png')}
-            style={styles.brandImage}
-            resizeMode="contain"
-          />
-          {/* Subtitle + info button, lifted up so it overlaps the brand text image. */}
-          <View style={styles.subtitleRow}>
-            <Text style={[styles.subtitle, { color: colors.textSecondary }]}>Управление роутером</Text>
-            <Pressable
-              onPress={() => { haptic(14); setAboutOpen(true); }}
-              hitSlop={10}
-              style={styles.infoBtn}
-            >
-              <Image
-                source={require('../../assets/info_icon.png')}
-                style={[styles.infoIcon, { tintColor: colors.textSecondary }]}
-                resizeMode="contain"
-              />
-            </Pressable>
-          </View>
-        </View>
+        {/* ── Шапка с роутером ──
+            Общий блок с экраном блокировки: это одна и та же шапка,
+            а не две похожие копии. */}
+        <BrandStack onInfoPress={() => setAboutOpen(true)} />
 
         {/* ── Form block pinned at a fixed screen height (upper-middle) ── */}
         <View style={[styles.formBlock, { top: formTop }]}>
@@ -460,43 +436,8 @@ const styles = StyleSheet.create({
     left: Spacing.lg,
     right: Spacing.lg,
   },
-  brandStack: {
-    alignItems: 'center',
-    width: '100%',
-  },
-  routerImage: {
-    width: 300,
-    height: 215,
-  },
-  brandImage: {
-    width: '92%',
-    maxWidth: 500,
-    aspectRatio: 1280 / 518,
-    height: undefined,
-    // Lifted up hard so it overlaps the bottom edge of the router image.
-    marginTop: -40,
-    marginBottom: 0,
-  },
-  subtitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    // Lifted up so it overlaps the bottom edge of the brand text image.
-    marginTop: -16,
-  },
-  subtitle: {
-    fontFamily: FONT.regular,
-    fontSize: 14,
-  },
-  infoBtn: {
-    marginLeft: 8,
-    padding: 4,
-  },
-  infoIcon: {
-    width: 16,
-    height: 16,
-    opacity: 0.8,
-  },
+  // Стили шапки с роутером переехали в src/components/BrandStack.tsx —
+// её используют и экран входа, и экран блокировки.
   card: {
     borderRadius: Radius.md,
     borderWidth: StyleSheet.hairlineWidth,

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Keenetic Giga — вход с телефона
 // @namespace    https://github.com/NOTyeamu/KeeneticGigaApp
-// @version      2.2.0
+// @version      2.3.0
 // @description  Принимает данные роутера со страницы связки и сам входит в веб-интерфейс Keenetic
 // @author       NOTyeamu
 // @homepageURL  https://notyeamu.github.io/KeeneticGigaApp/pair.html
@@ -313,6 +313,21 @@
       } catch (e) {
         /* не критично */
       }
+
+      // Сообщаем странице связки, что вход выполнен: по этому сигналу она
+      // закроет свою вкладку. Токен пришёл вместе с данными — по нему
+      // страница убедится, что подтверждение относится к её сеансу.
+      if (payload.closeToken && window.opener) {
+        try {
+          window.opener.postMessage(
+            { type: 'keenetic-giga-pair-ack', closeToken: payload.closeToken },
+            '*'
+          );
+        } catch (e) {
+          /* окно могло быть уже закрыто */
+        }
+      }
+
       location.reload();
     });
   }
