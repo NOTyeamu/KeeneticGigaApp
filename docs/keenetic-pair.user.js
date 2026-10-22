@@ -317,6 +317,71 @@
     });
   }
 
+  // ── Ссылка на страницу QR в форме входа ────────────────────
+  // Ставим её рядом с «Не могу войти» и «Центр поддержки», чтобы вход
+  // с телефона был виден там, где пользователь вводит пароль.
+  //
+  // Разметку рисует Angular, поэтому: классами управляет он (у них есть
+  // служебные суффиксы вида ng-tns-c4170177629-1, которые меняются от сборки
+  // к сборке), элементов в DOM изначально нет, а стили привязаны к служебным
+  // атрибутам. Поэтому ищем по устойчивому префиксу класса, ждём появления
+  // узла и не сочиняем разметку, а копируем существующую ссылку — вместе
+  // с её атрибутами и, значит, с её видом.
+  var PAIR_PAGE = 'https://notyeamu.github.io/KeeneticGigaApp/pair.html';
+  var linksInjected = false;
+
+  function injectPairLink() {
+    if (linksInjected) return;
+
+    var links = document.querySelector('.login-form__settings-links');
+    if (!links) return;
+
+    var sample = links.querySelector('a');
+    if (!sample) return;
+
+    var divider = links.querySelector('.login-form__divider');
+
+    var link = sample.cloneNode(true);
+    link.setAttribute('href', PAIR_PAGE);
+    link.setAttribute('target', '_blank');
+    link.setAttribute('rel', 'noopener');
+    // На копии не должно остаться ничего, что уведёт на Центр поддержки.
+    link.removeAttribute('ng-reflect-router-link');
+
+    // Подпись лежит во вложенном span — меняем текст у него, сохраняя разметку.
+    var label = link.querySelector('span') || link;
+    label.textContent = 'Сканировать QR';
+
+    if (divider) links.appendChild(divider.cloneNode(true));
+    links.appendChild(link);
+
+    linksInjected = true;
+    log('ссылка «Сканировать QR» добавлена в форму входа');
+  }
+
+  function watchLoginForm() {
+    injectPairLink();
+    if (linksInjected) return;
+
+    // Форму рисует Angular уже после загрузки документа, поэтому просто
+    // следим за деревом и добавляем ссылку, как только она появится.
+    var observer = new MutationObserver(function () {
+      injectPairLink();
+      if (linksInjected) observer.disconnect();
+    });
+
+    var root = document.documentElement || document.body;
+    if (root) observer.observe(root, { childList: true, subtree: true });
+
+    // Подстраховка: если форму отрисуют до того, как наблюдатель встал.
+    var tries = 0;
+    var timer = setInterval(function () {
+      tries++;
+      injectPairLink();
+      if (linksInjected || tries > 40) clearInterval(timer);
+    }, 500);
+  }
+
   // ── Приём данных от страницы связки ────────────────────────
   window.addEventListener('message', function (event) {
     var data = event && event.data;
@@ -331,5 +396,6 @@
     apply(data);
   });
 
+  watchLoginForm();
   log('готов к приёму данных');
 })();

@@ -3,27 +3,30 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Вход в роутер — связка с телефоном</title>
+<title>Сканировать QR — вход в роутер с телефона</title>
 <style>
   :root { --bg:#0A0F14; --card:#111A22; --text:#E6F1F8; --muted:#7B9AB0; --accent:#00B4FF;
           --danger:#FF5C5C; --ok:#34D399; --line:#1B2C3A; }
   * { box-sizing: border-box; }
   body { margin:0; background:var(--bg); color:var(--text); font-family:'Segoe UI',Roboto,system-ui,sans-serif;
-         min-height:100vh; display:flex; align-items:center; justify-content:center; padding:20px; }
+         min-height:100vh; display:flex; align-items:center; justify-content:center; padding:18px; }
 
-  .card { width:100%; max-width:660px; background:var(--card); border:1px solid var(--line);
-          border-radius:20px; padding:22px; }
-  h1 { font-size:19px; margin:0 0 4px; font-weight:600; }
-  .sub { font-size:12.5px; color:var(--muted); margin:0 0 18px; line-height:1.5; }
+  .card { width:100%; max-width:620px; background:var(--card); border:1px solid var(--line);
+          border-radius:18px; padding:18px; }
 
-  /* QR слева, пояснения справа: так страница занимает вдвое меньше высоты. */
-  .grid { display:flex; gap:20px; align-items:flex-start; }
-  .qrcol { flex:0 0 236px; display:flex; flex-direction:column; gap:10px; }
-  .sidecol { flex:1; min-width:0; display:flex; flex-direction:column; gap:10px; }
+  /* Заголовок с пояснением в одну строку — вместо двух абзацев. */
+  .head { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; margin-bottom:14px; }
+  h1 { font-size:18px; margin:0; font-weight:600; letter-spacing:-.2px; }
+  .head .sub { font-size:12.5px; color:var(--muted); margin:0; }
+  h2 { font-size:16px; margin:0 0 10px; font-weight:600; }
 
-  /* Белая рамка вокруг кода. Ширина по содержимому — иначе по бокам
-     остаются широкие белые полосы до края карточки. */
-  .qrbox { background:#fff; border-radius:14px; padding:10px; line-height:0; }
+  /* QR слева, пояснения справа: страница занимает вдвое меньше высоты. */
+  .grid { display:flex; gap:18px; align-items:flex-start; }
+  .qrcol { flex:0 0 216px; display:flex; flex-direction:column; gap:9px; }
+  .sidecol { flex:1; min-width:0; display:flex; flex-direction:column; gap:11px; }
+
+  /* Белая рамка вокруг кода: только по содержимому, без полос по бокам. */
+  .qrbox { background:#fff; border-radius:13px; padding:9px; line-height:0; }
   .qrbox svg { display:block; width:100%; height:auto; }
 
   .timer { display:flex; flex-direction:column; gap:5px; }
@@ -35,45 +38,91 @@
   .timertext { font-size:11px; color:var(--muted); text-align:center; }
 
   .btn { width:100%; height:42px; border:0; border-radius:12px; font-size:14px; font-weight:600;
-         cursor:pointer; transition:opacity .15s; display:flex; align-items:center; justify-content:center; gap:7px; }
-  .btn:disabled { opacity:.45; cursor:default; }
+         cursor:pointer; transition:opacity .15s, background-color .15s;
+         display:flex; align-items:center; justify-content:center; gap:7px; }
+  .btn:disabled { opacity:.4; cursor:default; }
   .btn.primary { background:var(--accent); color:#fff; }
+  .btn.primary:not(:disabled):hover { background:#1FC0FF; }
   .btn.ghost { background:transparent; color:var(--text); border:1px solid var(--line); }
-  .btn.small { height:36px; font-size:12.5px; font-weight:500; }
 
-  .steps { font-size:12.5px; color:var(--muted); line-height:1.65; margin:0; padding-left:18px; }
+  .steps { font-size:12.5px; color:var(--muted); line-height:1.6; margin:0; padding-left:17px; }
+  .steps li { margin-bottom:2px; }
   .steps b { color:var(--text); font-weight:600; }
 
-  .pipe { display:flex; align-items:center; gap:9px; font-size:12px; color:var(--muted); }
+  .pipe { display:flex; align-items:center; gap:8px; font-size:12px; color:var(--muted); }
   .dot { width:8px; height:8px; border-radius:50%; background:#374B5C; flex:none; }
   .dot.on { background:var(--ok); box-shadow:0 0 8px rgba(52,211,153,.7); }
   .dot.warn { background:var(--accent); box-shadow:0 0 8px rgba(0,180,255,.7); }
 
-  .status { font-size:12.5px; color:var(--muted); margin:14px 0 0; line-height:1.5; min-height:18px; }
+  .status { font-size:12.5px; color:var(--muted); margin:10px 0 0; line-height:1.5; min-height:17px; }
   .status.ok { color:var(--ok); }
   .status.err { color:var(--danger); }
 
-  .warn { background:rgba(255,92,92,.07); border:1px solid rgba(255,92,92,.28); border-radius:12px;
-          padding:11px 13px; margin-top:14px; font-size:12px; line-height:1.55; color:#FFB4B4; }
-  .warn b { color:#FFD9D9; }
+  /* ── Кнопки-иконки ───────────────────────────────────────────
+     В покое это компактный квадрат с иконкой; при наведении кнопка
+     раскрывается и рядом с иконкой проявляется подпись. Второстепенные
+     действия занимают одну строку вместо четырёх.
+     Ширина анимируется через max-width: переход к `auto` невозможен. */
+  .icons { display:flex; flex-wrap:wrap; gap:7px; margin-top:14px; }
+  .iconbtn {
+    display:flex; align-items:center; gap:0;
+    height:38px; padding:0 10px;
+    border:1px solid var(--line); border-radius:11px;
+    background:transparent; color:var(--text); cursor:pointer; overflow:hidden;
+    max-width:38px;
+    transition:max-width .3s cubic-bezier(.4,0,.2,1), gap .3s cubic-bezier(.4,0,.2,1),
+               border-color .18s, color .18s, background-color .18s;
+  }
+  .iconbtn svg { flex:none; width:17px; height:17px; stroke:currentColor; fill:none;
+                 stroke-width:1.9; stroke-linecap:round; stroke-linejoin:round; }
+  .iconbtn .lbl { font-size:12.5px; white-space:nowrap; opacity:0;
+                  transition:opacity .16s ease .08s; }
+  .iconbtn:hover, .iconbtn:focus-visible {
+    max-width:250px; gap:8px;
+    border-color:var(--accent); color:var(--accent); background:rgba(0,180,255,.09);
+  }
+  .iconbtn:hover .lbl, .iconbtn:focus-visible .lbl { opacity:1; }
 
-  /* Увеличенный код на весь экран — когда камера не берёт мелкий. */
-  .zoom { position:fixed; inset:0; background:rgba(6,10,14,.97); z-index:50;
-          display:flex; flex-direction:column; align-items:center; justify-content:center; gap:18px; padding:20px; }
-  .zoom[hidden] { display:none; }
-  .zoom .qrbox { width:min(78vmin, 520px); padding:14px; }
-  .zoom .hint { font-size:13px; color:var(--muted); }
+  /* На тачскрине наведения нет — подписи показываем сразу. */
+  @media (hover: none) {
+    .iconbtn { max-width:250px; gap:8px; }
+    .iconbtn .lbl { opacity:1; }
+  }
+
+  .note { display:flex; align-items:flex-start; gap:8px; font-size:11.5px; color:var(--muted);
+          line-height:1.5; margin:12px 0 0; }
+  .note svg { flex:none; width:14px; height:14px; margin-top:1px; stroke:var(--accent); fill:none;
+              stroke-width:1.9; stroke-linecap:round; stroke-linejoin:round; }
+  .note b { color:var(--text); font-weight:600; }
+
+  /* ── Модальные окна: увеличенный код и справка ── */
+  .modal { position:fixed; inset:0; background:rgba(6,10,14,.96); z-index:50;
+           display:flex; flex-direction:column; align-items:center; justify-content:center;
+           gap:16px; padding:20px; }
+  .modal[hidden] { display:none; }
+  .zoom .qrbox { width:min(76vmin, 480px); padding:13px; }
+  .modal .hint { font-size:13px; color:var(--muted); }
+
+  .sheet { width:100%; max-width:440px; background:var(--card); border:1px solid var(--line);
+           border-radius:16px; padding:20px; }
+  .sheet .body { font-size:13px; color:var(--muted); line-height:1.6; }
+  .sheet .body ol { padding-left:18px; margin:0 0 12px; }
+  .sheet .body li { margin-bottom:4px; }
+  .sheet .body b { color:var(--text); }
+  .sheet .btn { margin-top:16px; }
 
   @media (max-width:560px) {
-    .grid { flex-direction:column; }
-    .qrcol { flex:none; width:100%; max-width:280px; align-self:center; }
+    .grid { flex-direction:column; gap:14px; }
+    .qrcol { flex:none; width:100%; max-width:250px; align-self:center; }
   }
 </style>
 </head>
 <body>
 <div class="card">
-  <h1>Вход в роутер с телефона</h1>
-  <p class="sub">Отсканируйте код телефоном — данные роутера придут сюда, и вход выполнится сам.</p>
+  <div class="head">
+    <h1>Сканировать QR</h1>
+    <p class="sub">Покажите код телефону — данные роутера придут сюда, и вход выполнится сам.</p>
+  </div>
 
   <div class="grid">
     <div class="qrcol">
@@ -82,7 +131,6 @@
         <div class="timerbar"><div class="timerfill" id="timerFill"></div></div>
         <div class="timertext" id="timerText">Готовим код…</div>
       </div>
-      <button class="btn ghost small" id="zoomBtn">Увеличить код</button>
     </div>
 
     <div class="sidecol">
@@ -92,30 +140,78 @@
       </div>
 
       <ol class="steps">
-        <li>В приложении на телефоне: <b>Настройки → Вход с компьютера</b>.</li>
-        <li>Нажмите <b>«Сканировать QR»</b> и наведите камеру на код слева.</li>
-        <li>Данные придут сюда — откроется роутер с автоматическим входом.</li>
+        <li>Откройте приложение на телефоне</li>
+        <li><b>Настройки → Сканировать QR</b></li>
+        <li>Наведите камеру на код слева</li>
       </ol>
 
       <button class="btn primary" id="openBtn" disabled>Открыть роутер</button>
-      <button class="btn ghost small" id="refreshBtn">Обновить код</button>
-      <button class="btn ghost small" id="scriptBtn">Скачать скрипт для Tampermonkey</button>
-      <button class="btn ghost small" id="copyScriptBtn">Скопировать адрес скрипта</button>
     </div>
   </div>
 
-  <div class="warn">
-    Автоматический вход выполняет расширение <b>Tampermonkey</b> со скриптом.
-    Без него страница роутера откроется, но данные в неё не передадутся — пароль придётся ввести вручную.
+  <div class="icons">
+    <button class="iconbtn" id="zoomBtn" title="Увеличить код">
+      <svg viewBox="0 0 24 24"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/></svg>
+      <span class="lbl">Увеличить код</span>
+    </button>
+    <button class="iconbtn" id="refreshBtn" title="Обновить код">
+      <svg viewBox="0 0 24 24"><path d="M20.5 12a8.5 8.5 0 1 1-2.8-6.3"/><path d="M20.5 4v5h-5"/></svg>
+      <span class="lbl">Обновить код</span>
+    </button>
+    <button class="iconbtn" id="scriptBtn" title="Скачать скрипт для Tampermonkey">
+      <svg viewBox="0 0 24 24"><path d="M12 3v11"/><path d="M7.5 9.5 12 14l4.5-4.5"/><path d="M4 20h16"/></svg>
+      <span class="lbl">Скачать скрипт</span>
+    </button>
+    <button class="iconbtn" id="copyScriptBtn" title="Скопировать адрес скрипта">
+      <svg viewBox="0 0 24 24"><path d="M10 13.5a4.5 4.5 0 0 0 6.4 0l2.6-2.6a4.5 4.5 0 0 0-6.4-6.4l-1 1"/><path d="M14 10.5a4.5 4.5 0 0 0-6.4 0l-2.6 2.6a4.5 4.5 0 0 0 6.4 6.4l1-1"/></svg>
+      <span class="lbl">Скопировать адрес</span>
+    </button>
+    <button class="iconbtn" id="helpBtn" title="Как это работает">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9.6 9.2a2.5 2.5 0 1 1 3.2 2.4c-.8.3-1.3 1-1.3 1.8v.2"/><path d="M12 17.2h.01"/></svg>
+      <span class="lbl">Как это работает</span>
+    </button>
   </div>
+
+  <p class="note">
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8h.01"/><path d="M11 12h1v5h1"/></svg>
+    <span>Автоматический вход выполняет расширение <b>Tampermonkey</b> со скриптом.
+      Без него роутер откроется, но пароль придётся ввести вручную.</span>
+  </p>
 
   <p class="status" id="status"></p>
 </div>
 
-<div class="zoom" id="zoom" hidden>
+<!-- Увеличенный код: когда камера не берёт мелкий. -->
+<div class="modal zoom" id="zoom" hidden>
   <div class="qrbox" id="qrboxBig"></div>
   <div class="hint">Наведите камеру телефона на код</div>
-  <button class="btn ghost small" id="zoomClose" style="max-width:200px">Закрыть</button>
+  <button class="btn ghost" id="zoomClose" style="max-width:190px">Закрыть</button>
+</div>
+
+<!-- Справка: подробности, которые не нужны на самой странице. -->
+<div class="modal" id="help" hidden>
+  <div class="sheet">
+    <h2>Как это работает</h2>
+    <div class="body">
+      <ol>
+        <li>Код показывает <b>компьютер</b>, а читает <b>телефон</b>.</li>
+        <li>Телефон шифрует данные роутера и передаёт их на компьютер.</li>
+        <li>Компьютер расшифровывает и входит в роутер сам.</li>
+      </ol>
+      <p style="margin:0 0 10px">
+        Код показывает компьютер, потому что страница роутера открывается по обычному
+        <b>http://</b> — браузер не даёт такой странице доступ к камере. Камера есть только
+        у телефона.
+      </p>
+      <p style="margin:0">
+        Данные зашифрованы ключом из самого кода. Ключ есть только у этих двух устройств,
+        поэтому посредник видит нечитаемый набор байт, и тот не сохраняется.
+        Вход выполняет расширение <b>Tampermonkey</b> со скриптом — скачать его можно
+        кнопкой ниже.
+      </p>
+    </div>
+    <button class="btn ghost" id="helpClose">Понятно</button>
+  </div>
 </div>
 
 <script src="vendor/qrcode.js"></script>
@@ -155,7 +251,7 @@ const el = (id) => document.getElementById(id);
 const qrbox = el('qrbox'), qrboxBig = el('qrboxBig');
 const status = el('status'), pipeDot = el('pipeDot'), pipeText = el('pipeText');
 const timerFill = el('timerFill'), timerText = el('timerText');
-const zoom = el('zoom');
+const zoom = el('zoom'), help = el('help');
 
 /** Активные сеансы: текущий и, на время запаса, предыдущий. */
 let sessions = [];
@@ -299,7 +395,7 @@ function cleanup() {
   });
 }
 
-function rotate(reason) {
+function rotate() {
   startSession();
   rotatedAt = Date.now();
   setStatus('Код обновлён. Наведите камеру телефона на новый код.', '');
@@ -316,7 +412,7 @@ function tick() {
 
   // Код обновляется сам, поэтому сканировать мёртвый код не придётся.
   if (left <= 0) {
-    rotate('auto');
+    rotate();
     cleanup();
     return;
   }
@@ -405,7 +501,7 @@ function openRouter() {
 
 // ── Управление ───────────────────────────────────────────────
 el('openBtn').addEventListener('click', openRouter);
-el('refreshBtn').addEventListener('click', () => rotate('manual'));
+el('refreshBtn').addEventListener('click', rotate);
 
 el('zoomBtn').addEventListener('click', () => {
   qrboxBig.innerHTML = svgCache;
@@ -413,7 +509,16 @@ el('zoomBtn').addEventListener('click', () => {
 });
 el('zoomClose').addEventListener('click', () => { zoom.hidden = true; });
 zoom.addEventListener('click', (e) => { if (e.target === zoom) zoom.hidden = true; });
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') zoom.hidden = true; });
+
+el('helpBtn').addEventListener('click', () => { help.hidden = false; });
+el('helpClose').addEventListener('click', () => { help.hidden = true; });
+help.addEventListener('click', (e) => { if (e.target === help) help.hidden = true; });
+
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  zoom.hidden = true;
+  help.hidden = true;
+});
 
 el('scriptBtn').addEventListener('click', () => {
   const a = document.createElement('a');

@@ -333,13 +333,13 @@ export function SettingsScreen() {
       <SectionLabel colors={colors}>Приложение</SectionLabel>
       <View style={[styles.group, { borderColor: colors.border, backgroundColor: colors.card }]}>
         <ListButton
-          title="Вход с компьютера"
+          title="Сканировать QR"
           icon="qr-code-outline"
-          subtitle="Перенести данные роутера на ПК по QR-коду"
+          subtitle="Войти в роутер на компьютере по QR-коду"
           first
           onPress={() => {
             haptic();
-            navigation.navigate('SettingsPage', { title: 'Вход с компьютера', page: 'PcLogin' });
+            navigation.navigate('SettingsPage', { title: 'Сканировать QR', page: 'PcLogin' });
           }}
         />
         <View style={{ height: StyleSheet.hairlineWidth, backgroundColor: colors.divider, marginLeft: 58 }} />

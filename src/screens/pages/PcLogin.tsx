@@ -15,7 +15,7 @@ import { downloadScript, SCRIPT_LINK, SCRIPT_FILE_NAME } from '../../lib/script'
 import { FONT, Radius, Spacing } from '../../theme/colors';
 
 /**
- * «Вход с компьютера» — перенос данных роутера на ПК.
+ * «Сканировать QR» — перенос данных роутера на компьютер.
  *
  * Порядок обратный тому, что кажется очевидным: QR-код показывает компьютер,
  * а телефон его считывает. Так вышло не случайно. Страница роутера
@@ -194,7 +194,7 @@ export default function PcLogin() {
     <View style={{ gap: Spacing.md }}>
       <View style={styles.headerRow}>
         <Text style={{ flex: 1, fontFamily: FONT.bold, fontSize: 20, color: colors.text }}>
-          Вход с компьютера
+          Сканировать QR
         </Text>
         <Pressable onPress={showHelp} hitSlop={10} style={{ padding: 2 }}>
           <Ionicons name="help-circle-outline" size={22} color={colors.accent} />
