@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Keenetic Giga — вход с телефона
 // @namespace    https://github.com/NOTyeamu/KeeneticGigaApp
-// @version      2.1.0
+// @version      2.2.0
 // @description  Принимает данные роутера со страницы связки и сам входит в веб-интерфейс Keenetic
 // @author       NOTyeamu
 // @homepageURL  https://notyeamu.github.io/KeeneticGigaApp/pair.html
