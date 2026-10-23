@@ -1,15 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  ActivityIndicator,
-  Animated,
-  Dimensions,
-  Easing,
-  Image,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
+import { Animated, Dimensions, Easing, Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
@@ -18,6 +8,7 @@ import { useAlert } from '../components/AlertDialog';
 import { BrandStack } from '../components/BrandStack';
 import { PinDots } from '../components/PinDots';
 import { PinKeypad } from '../components/PinKeypad';
+import { LoadingLine } from '../components/LoadingLine';
 import { PIN_LENGTH } from '../lib/session';
 import { FONT, Radius, Spacing } from '../theme/colors';
 
@@ -36,7 +27,7 @@ import { FONT, Radius, Spacing } from '../theme/colors';
  */
 export function LockScreen() {
   const { colors, haptic } = useSettings();
-  const { unlock, unlockWithBiometrics, biometricEnabled, forgotPin } = useAuth();
+  const { unlock, unlockWithBiometrics, biometricEnabled, forgotPin, afterUnlock } = useAuth();
   const alert = useAlert();
   const insets = useSafeAreaInsets();
 
@@ -68,15 +59,18 @@ export function LockScreen() {
   }, [appear]);
 
   /**
-   * Показывает, что вход выполнен. Ждём окончания анимации, а затем
-   * приложение само сменит экран — поэтому здесь ничего не переключаем.
+   * Показывает, что вход выполнен, и передаёт управление дальше.
+   *
+   * Анимация короткая: вход и без неё занимает время на вывод ключа,
+   * а мой прошлый вариант добавлял к этому ещё 0,4 с ожидания. Экран
+   * здесь не переключаем — после анимации приложение само покажет меню.
    */
   const playSuccess = useCallback(async () => {
     haptic(30);
     await new Promise<void>((resolve) => {
       Animated.timing(success, {
         toValue: 1,
-        duration: 380,
+        duration: 200,
         easing: Easing.out(Easing.cubic),
         useNativeDriver: true,
       }).start(() => resolve());
@@ -127,6 +121,9 @@ export function LockScreen() {
       setBusy(true);
       const ok = await unlock(value);
       if (ok) {
+        // Отпечаток мог устареть после смены в системе — проверяем это
+        // здесь, когда ключ уже под рукой, и без запроса пальца.
+        await afterUnlock();
         await playSuccess();
       } else {
         haptic(60);
@@ -137,7 +134,7 @@ export function LockScreen() {
       }
       setBusy(false);
     },
-    [haptic, unlock, playSuccess],
+    [haptic, unlock, playSuccess, afterUnlock],
   );
 
   const onDigit = (digit: string) => {
@@ -173,18 +170,6 @@ export function LockScreen() {
 
   return (
     <View style={[styles.container, { backgroundColor: colors.bg }]}>
-      {/*
-        Подложка: картинка растянута на весь экран. Сама она тёмная, поэтому
-        затемнение здесь лёгкое — оно лишь добавляет глубины и помогает
-        карточке читаться, но не прячет рисунок целиком.
-      */}
-      <Image
-        source={require('../../assets/background_for_pin_code.jpg')}
-        style={StyleSheet.absoluteFill}
-        resizeMode="cover"
-      />
-      <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(6,10,14,0.35)' }]} />
-
       <Animated.View
         style={[
           styles.content,
@@ -197,6 +182,18 @@ export function LockScreen() {
         <View style={[styles.formBlock, { top: formTop }]}>
           <Animated.View style={successStyle}>
             <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              {/*
+                Фон лежит внутри карточки — той самой, где точки, клавиатура
+                и отпечаток. Карточка уже скруглена, поэтому картинка
+                обрезается по её углам и не выходит за пределы блока.
+              */}
+              <Image
+                source={require('../../assets/background_for_pin_code.jpg')}
+                style={styles.cardBg}
+                resizeMode="cover"
+              />
+              <View style={[styles.cardBg, { backgroundColor: 'rgba(10,15,20,0.18)' }]} />
+
               <PinDots filled={pin.length} error={error} />
 
               <Text style={[styles.hint, { color: error ? colors.danger : colors.textSecondary }]}>
@@ -209,7 +206,7 @@ export function LockScreen() {
               */}
               {busy ? (
                 <View style={styles.busyBlock}>
-                  <ActivityIndicator size="large" color={colors.accent} />
+                  <LoadingLine label="Проверяем…" />
                 </View>
               ) : pinMode ? (
                 <PinKeypad onDigit={onDigit} onDelete={onDelete} />
@@ -294,6 +291,20 @@ const styles = StyleSheet.create({
     paddingHorizontal: Spacing.sm,
     paddingTop: Spacing.lg,
     paddingBottom: Spacing.sm,
+    // Картинка внутри карточки должна обрезаться по её скруглённым углам,
+    // а не вылезать прямоугольником.
+    overflow: 'hidden',
+  },
+  /**
+   * Фон карточки: растянут по её площади. Затемнение поверх лёгкое — сама
+   * картинка тёмная, и сильное прятало бы её целиком.
+   */
+  cardBg: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
   },
   hint: {
     fontFamily: FONT.regular,

@@ -32,16 +32,6 @@ import * as Session from '../lib/session';
 /** Через сколько в фоне сессия запирается заново. */
 const LOCK_AFTER_MS = 30_000;
 
-/**
- * Пауза перед тем, как впустить в приложение.
- *
- * Вывод ключа из пина занимает заметное время, и без этой паузы главный
- * экран появлялся бы рывком, сразу после последней цифры — казалось бы,
- * что приложение не отреагировало, а просто перескочило. Пауза даёт экрану
- * блокировки показать, что вход выполнен.
- */
-const UNLOCK_HOLD_MS = 450;
-
 interface AuthContextValue {
   credentials: Credentials | null;
   ready: boolean;
@@ -60,6 +50,11 @@ interface AuthContextValue {
   unlock: (pin: string) => Promise<boolean>;
   /** Разблокировка отпечатком. false — отменено или не подошёл. */
   unlockWithBiometrics: () => Promise<boolean>;
+  /**
+   * Вызывается экраном блокировки сразу после успешного входа. Проверяет,
+   * не устарел ли ключ отпечатка, и заводит его заново, если нужно.
+   */
+  afterUnlock: () => Promise<void>;
 
   /** Включает сохранение сессии: данные уходят под придуманный пин. */
   enablePersistence: (pin: string) => Promise<void>;
@@ -188,35 +183,44 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const creds = await Session.credsFromDek(dek);
     if (!creds) return false;
 
-    // Отпечаток мог устареть после смены отпечатка в системе. Если он
-    // включён, но система больше не отдаёт ключ, — перезаписываем его,
-    // пока DEK под рукой. Иначе вход по отпечатку молча перестал бы работать.
-    if (biometricEnabled) {
-      const works = await Session.unlockWithBiometrics();
-      if (!works) await Session.enableBiometrics(dek);
-    }
-
-    // Пауза не входит в саму проверку: экран блокировки успевает показать,
-    // что вход выполнен, а не пропадает мгновенно.
-    await new Promise((r) => setTimeout(r, UNLOCK_HOLD_MS));
-
     dekRef.current = dek;
     setCredentials(creds);
     setLocked(false);
     return true;
-  }, [biometricEnabled]);
+  }, []);
 
   const unlockWithBiometrics = useCallback(async (): Promise<boolean> => {
     const result = await Session.unlockDekWithBiometrics();
     if (!result) return false;
-
-    await new Promise((r) => setTimeout(r, UNLOCK_HOLD_MS));
 
     dekRef.current = result.dek;
     setCredentials(result.creds);
     setLocked(false);
     return true;
   }, []);
+
+  /**
+   * Проверяет, работает ли ещё вход по отпечатку, и при необходимости
+   * заводит его заново.
+   *
+   * Вызывается, когда DEK уже под рукой — то есть после успешного входа
+   * по пину. Отпечаток в системе мог смениться, и тогда системный ключ
+   * становится недействительным; перезапись возвращает вход по отпечатку.
+   *
+   * Палец здесь не спрашивается: спрашивать его сразу после того, как
+   * человек только что ввёл пин, было бы и лишним, и навязчивым.
+   */
+  const refreshBiometricKey = useCallback(async (dek: Uint8Array) => {
+    const works = await Session.canUseBiometricKey();
+    if (!works) await Session.enableBiometrics(dek);
+  }, []);
+
+  /** Вызывается экраном блокировки после успешного входа. */
+  const afterUnlock = useCallback(async () => {
+    const dek = dekRef.current;
+    if (!dek || !biometricEnabled) return;
+    await refreshBiometricKey(dek);
+  }, [biometricEnabled, refreshBiometricKey]);
 
   // ── Настройки сессии ───────────────────────────────────────
   const enablePersistence = useCallback(async (pin: string) => {
@@ -282,6 +286,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       biometricAvailable,
       unlock,
       unlockWithBiometrics,
+      afterUnlock,
       enablePersistence,
       changePin,
       enrollBiometrics,
@@ -300,6 +305,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       biometricAvailable,
       unlock,
       unlockWithBiometrics,
+      afterUnlock,
       enablePersistence,
       changePin,
       enrollBiometrics,

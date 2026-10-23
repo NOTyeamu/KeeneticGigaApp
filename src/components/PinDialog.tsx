@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSettings } from '../context/SettingsContext';
 import { PinDots } from './PinDots';
 import { PinKeypad } from './PinKeypad';
+import { LoadingLine } from './LoadingLine';
 import { PIN_LENGTH } from '../lib/session';
 import { FONT, Radius, Spacing } from '../theme/colors';
 
@@ -156,8 +157,7 @@ export function PinDialog({ visible, steps, onCancel, onDone, onMismatch }: PinD
           */}
           {busy ? (
             <View style={styles.busyBlock}>
-              <ActivityIndicator size="small" color={colors.accent} />
-              <Text style={[styles.busyLabel, { color: colors.textSecondary }]}>{busyLabel}</Text>
+              <LoadingLine label={busyLabel} />
             </View>
           ) : (
             <>

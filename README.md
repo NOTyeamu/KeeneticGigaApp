@@ -4,7 +4,7 @@
 
 **Приложение для телефона, чтобы управлять роутером Keenetic Giga.**
 
-![Version](https://img.shields.io/badge/version-1.9.1-blue?style=flat-square)
+![Version](https://img.shields.io/badge/version-1.9.2-blue?style=flat-square)
 ![Platform](https://img.shields.io/badge/platform-Android-3DDC84?style=flat-square&logo=android&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)
 
