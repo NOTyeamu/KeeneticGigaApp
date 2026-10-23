@@ -32,6 +32,16 @@ import * as Session from '../lib/session';
 /** Через сколько в фоне сессия запирается заново. */
 const LOCK_AFTER_MS = 30_000;
 
+/**
+ * Пауза перед тем, как впустить в приложение.
+ *
+ * Вывод ключа из пина занимает заметное время, и без этой паузы главный
+ * экран появлялся бы рывком, сразу после последней цифры — казалось бы,
+ * что приложение не отреагировало, а просто перескочило. Пауза даёт экрану
+ * блокировки показать, что вход выполнен.
+ */
+const UNLOCK_HOLD_MS = 450;
+
 interface AuthContextValue {
   credentials: Credentials | null;
   ready: boolean;
@@ -186,6 +196,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!works) await Session.enableBiometrics(dek);
     }
 
+    // Пауза не входит в саму проверку: экран блокировки успевает показать,
+    // что вход выполнен, а не пропадает мгновенно.
+    await new Promise((r) => setTimeout(r, UNLOCK_HOLD_MS));
+
     dekRef.current = dek;
     setCredentials(creds);
     setLocked(false);
@@ -195,6 +209,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const unlockWithBiometrics = useCallback(async (): Promise<boolean> => {
     const result = await Session.unlockDekWithBiometrics();
     if (!result) return false;
+
+    await new Promise((r) => setTimeout(r, UNLOCK_HOLD_MS));
 
     dekRef.current = result.dek;
     setCredentials(result.creds);

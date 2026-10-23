@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSettings } from '../context/SettingsContext';
 import { PinDots } from './PinDots';
 import { PinKeypad } from './PinKeypad';
@@ -56,6 +56,12 @@ export function PinDialog({ visible, steps, onCancel, onDone, onMismatch }: PinD
   }, [visible]);
 
   const step = steps[stepIndex];
+
+  /**
+   * Что написать под крутящимся индикатором. Вывод ключа идёт в двух случаях,
+   * и для пользователя это разные события, поэтому и подписи разные.
+   */
+  const busyLabel = step?.create ? 'Сохраняем…' : 'Проверяем…';
 
   /**
    * Для шага-подтверждения ожидаемый пин берём не из описания, а из
@@ -143,15 +149,29 @@ export function PinDialog({ visible, steps, onCancel, onDone, onMismatch }: PinD
             <PinDots filled={current.length} error={error} />
           </View>
 
-          <PinKeypad
-            onDigit={onDigit}
-            onDelete={() => !busy && setCurrent((p) => p.slice(0, -1))}
-            disabled={busy}
-          />
+          {/*
+            Пока выводится ключ, показываем ход работы. Вывод ключа занимает
+            заметное время (он намеренно сделан тяжёлым), и без этого казалось
+            бы, что приложение зависло и не поняло, что пин введён.
+          */}
+          {busy ? (
+            <View style={styles.busyBlock}>
+              <ActivityIndicator size="small" color={colors.accent} />
+              <Text style={[styles.busyLabel, { color: colors.textSecondary }]}>{busyLabel}</Text>
+            </View>
+          ) : (
+            <>
+              <PinKeypad
+                onDigit={onDigit}
+                onDelete={() => setCurrent((p) => p.slice(0, -1))}
+                disabled={busy}
+              />
 
-          <Pressable onPress={onCancel} hitSlop={8} style={styles.cancelBtn}>
-            <Text style={[styles.cancelLabel, { color: colors.textMuted }]}>Отмена</Text>
-          </Pressable>
+              <Pressable onPress={onCancel} hitSlop={8} style={styles.cancelBtn}>
+                <Text style={[styles.cancelLabel, { color: colors.textMuted }]}>Отмена</Text>
+              </Pressable>
+            </>
+          )}
         </Pressable>
       </Pressable>
     </Modal>
@@ -194,6 +214,18 @@ const styles = StyleSheet.create({
   dotsWrap: {
     marginTop: Spacing.lg,
     marginBottom: Spacing.sm,
+  },
+  /** Заглушка вместо клавиатуры, пока идёт вывод ключа. */
+  busyBlock: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.sm,
+    // Держим ту же высоту, что и клавиатура, чтобы окно не скакало.
+    height: 232,
+  },
+  busyLabel: {
+    fontFamily: FONT.regular,
+    fontSize: 13,
   },
   cancelBtn: {
     alignItems: 'center',

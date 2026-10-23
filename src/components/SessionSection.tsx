@@ -23,12 +23,11 @@ import { FONT, Radius, Spacing } from '../theme/colors';
 /** Какой диалог сейчас открыт. */
 type Dialog = 'none' | 'create' | 'change';
 
-/** Строка подпункта с иконкой, подписью и пояснением. */
+/** Строка подпункта: иконка, подпись и необязательный значок справа. */
 function SubRow({
   icon,
   active,
   title,
-  hint,
   trailing,
   onPress,
   dividerColor,
@@ -36,7 +35,6 @@ function SubRow({
   icon: string;
   active?: boolean;
   title: string;
-  hint: string;
   trailing: React.ReactNode;
   onPress: () => void;
   dividerColor: string;
@@ -51,12 +49,9 @@ function SubRow({
       <View style={[styles.subIcon, { backgroundColor: colors.bgElevated }]}>
         <Ionicons name={icon as any} size={17} color={active ? colors.online : colors.textSecondary} />
       </View>
-      <View style={{ flex: 1, marginLeft: 10 }}>
-        <Text style={{ fontFamily: FONT.medium, fontSize: 14, color: colors.text }}>{title}</Text>
-        <Text style={{ fontFamily: FONT.regular, fontSize: 11.5, color: colors.textSecondary, marginTop: 1 }}>
-          {hint}
-        </Text>
-      </View>
+      <Text style={{ flex: 1, marginLeft: 10, fontFamily: FONT.medium, fontSize: 14, color: colors.text }}>
+        {title}
+      </Text>
       {trailing}
     </Pressable>
   );
@@ -235,12 +230,9 @@ export function SessionSection() {
           <View style={[styles.iconBox, { backgroundColor: colors.accentSoft }]}>
             <Ionicons name="lock-closed-outline" size={18} color={colors.accent} />
           </View>
-          <View style={{ flex: 1, marginLeft: 12 }}>
-            <Text style={{ fontFamily: FONT.medium, fontSize: 15, color: colors.text }}>Сохранение сессии</Text>
-            <Text style={{ fontFamily: FONT.regular, fontSize: 12, color: colors.textSecondary, marginTop: 2 }}>
-              {persistenceEnabled ? 'Вход по пин-коду' : 'Вход спрашивается каждый раз'}
-            </Text>
-          </View>
+          <Text style={{ flex: 1, marginLeft: 12, fontFamily: FONT.medium, fontSize: 15, color: colors.text }}>
+            Сохранение сессии
+          </Text>
           <Switch
             value={persistenceEnabled}
             onValueChange={toggle}
@@ -264,7 +256,6 @@ export function SessionSection() {
             <SubRow
               icon="finger-print-outline"
               title="Добавить отпечаток пальца"
-              hint="Вход без ввода пин-кода"
               trailing={<Ionicons name="chevron-forward" size={16} color={colors.textMuted} />}
               onPress={() => {}}
               dividerColor={colors.divider}
@@ -272,7 +263,6 @@ export function SessionSection() {
             <SubRow
               icon="keypad-outline"
               title="Изменить пин-код"
-              hint="Понадобится текущий пин-код"
               trailing={<Ionicons name="chevron-forward" size={16} color={colors.textMuted} />}
               onPress={() => {}}
               dividerColor={colors.divider}
@@ -283,7 +273,6 @@ export function SessionSection() {
             icon={biometricEnabled ? 'finger-print' : 'finger-print-outline'}
             active={biometricEnabled}
             title={biometricEnabled ? 'Отпечаток добавлен' : 'Добавить отпечаток пальца'}
-            hint={biometricEnabled ? 'Нажмите, чтобы отключить' : 'Вход без ввода пин-кода'}
             trailing={
               biometricEnabled ? (
                 <Ionicons name="checkmark-circle" size={18} color={colors.online} />
@@ -298,7 +287,6 @@ export function SessionSection() {
           <SubRow
             icon="keypad-outline"
             title="Изменить пин-код"
-            hint="Понадобится текущий пин-код"
             trailing={<Ionicons name="chevron-forward" size={16} color={colors.textMuted} />}
             onPress={() => {
               haptic();
